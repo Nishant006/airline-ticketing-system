@@ -26,3 +26,17 @@ Thumbs.db
 logs/
 .env
 .env.local
+
+### Copilot Skills (auto-linked) ###
+AGENTS.md
+AI-WORKFLOW.md
+.github/copilot-instructions.md
+.github/skills/
+.github/instructions/
+.github/prompts/
+.github/ISSUE_TEMPLATE/
+.github/.copilot-skills-version
+graphify-out*
+features/
+postman/
+### /Copilot Skills ###
