@@ -1,0 +1,10 @@
+.git/
+.notes/
+target/
+.idea/
+*.iml
+.DS_Store
+hld/
+lld/
+tests/
+README.md

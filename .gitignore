@@ -1,0 +1,28 @@
+# --- Private working notes (NEVER commit: contains interview strategy) ---
+.notes/
+
+# --- Build output ---
+target/
+bin/
+!.mvn/wrapper/maven-wrapper.jar
+
+# --- IDE ---
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.classpath
+.project
+.factorypath
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Logs & local env ---
+*.log
+logs/
+.env
+.env.local
