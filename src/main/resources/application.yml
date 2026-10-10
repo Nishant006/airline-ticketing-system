@@ -1,0 +1,76 @@
+spring:
+  application:
+    name: airline-reservation
+
+  datasource:
+    # reWriteBatchedInserts lets the pgJDBC driver collapse a batch of INSERTs
+    # into a single multi-row statement. Relevant because a booking inserts one
+    # row per seat.
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/airline?reWriteBatchedInserts=true}
+    username: ${SPRING_DATASOURCE_USERNAME:airline}
+    password: ${SPRING_DATASOURCE_PASSWORD:airline}
+    hikari:
+      pool-name: airline-pool
+      maximum-pool-size: 20
+
+  jpa:
+    hibernate:
+      # Flyway owns the schema. Hibernate only verifies that the entity mapping
+      # agrees with it, and fails fast at startup if it does not.
+      ddl-auto: validate
+    # No lazy loading in the view layer: every query is deliberate.
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
+        batch_versioned_data: true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+
+  threads:
+    virtual:
+      enabled: true
+
+  jackson:
+    default-property-inclusion: non_null
+
+server:
+  port: 8080
+  error:
+    # Errors are returned as RFC 7807 ProblemDetail documents from the
+    # exception handlers; the servlet container's default error page is noise.
+    include-message: never
+    include-stacktrace: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: when-authorized
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+
+logging:
+  pattern:
+    # correlationId is placed on the MDC by a servlet filter.
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{correlationId:-}] %logger{36} - %msg%n"
+  level:
+    com.airline.reservation: INFO
+
+# Application-specific knobs. Deliberately externalised so that no business
+# constant (the 365-day booking window, retry counts) is hard-coded in Java.
+airline:
+  booking:
+    window-days: 365
