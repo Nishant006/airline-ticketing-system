@@ -1,0 +1,54 @@
+# ---------------------------------------------------------------------------
+# One-command reviewer experience:
+#
+#     docker compose up --build
+#
+# Brings up PostgreSQL 16 and the application. Flyway runs the migrations in
+# db/migrations on application startup, including the reference-data seed, so
+# the API is usable immediately with no manual database steps.
+# ---------------------------------------------------------------------------
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: airline-postgres
+    environment:
+      POSTGRES_DB: airline
+      POSTGRES_USER: airline
+      POSTGRES_PASSWORD: airline
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # The app must not start until Postgres can actually accept queries;
+      # the container being "running" is not the same as being ready.
+      test: ["CMD-SHELL", "pg_isready -U airline -d airline"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: airline-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/airline?reWriteBatchedInserts=true
+      SPRING_DATASOURCE_USERNAME: airline
+      SPRING_DATASOURCE_PASSWORD: airline
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 40s
+
+volumes:
+  postgres-data:
