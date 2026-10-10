@@ -15,9 +15,32 @@
 | 5 | [API surface](#5-api-surface) | API design |
 | 6 | [Architecture — as built](#6-architecture--as-built) | HLD → "Overall architecture", "Components", "Service interactions", "Request flow" |
 | 7 | [Deep dives](#7-deep-dives) | HLD → "Flight generation strategy", "Concurrency strategy" |
-| 8 | [Decision log](#8-decision-log) | HLD → "Major design decisions" |
+| 8 | [Major design decisions](#8-major-design-decisions) | HLD → "Major design decisions" |
 | 9 | [Scale-out evolution — NOT IMPLEMENTED](#9-scale-out-evolution--not-implemented) | Evaluation → "Scalability considerations" |
 | 10 | [Black boxes](#10-black-boxes) | Scope → "treated as a black box" |
+
+### Deliverable coverage — the brief's eight mandated HLD sections
+
+The brief lists exactly what an HLD *"should include"*. Each item is mapped to the
+section that satisfies it, so coverage can be checked without reading the document
+first. Nothing here is implied by a neighbouring section: *"Service interactions"* in
+particular is **not** the same question as *"Components"* (what the parts are) or
+*"Request flow"* (the path of one request) — it is the contract governing which part may
+call which, and under what transactional and failure semantics.
+
+| # | Brief mandate | Section |
+|---|---|---|
+| 1 | Overall architecture | §6, §6.1 Deployment view |
+| 2 | Components | §6.2 Component view |
+| 3 | **Service interactions** | **§6.4 Service interactions** |
+| 4 | Request flow | §6.3 Request flows |
+| 5 | Major design decisions | §8 Major design decisions |
+| 6 | Assumptions | §3 Assumptions |
+| 7 | Concurrency strategy | §7.2 Concurrency strategy |
+| 8 | Flight generation strategy | §7.1 Flight instance generation strategy |
+| + | *"Architecture diagrams are encouraged"* | `hld/diagrams/` — C4 context + container, ER, two sequence diagrams |
+
+---
 
 > **Reading note.** §6 describes **what is actually built and running in this
 > repository**. §9 describes how the same design would evolve under load that this
@@ -90,6 +113,28 @@ One flow per functional requirement:
 
 ---
 
+### 6.4 Service interactions
+
+*To be completed — must cover:*
+
+- **Call matrix**: which component may call which, and the directions that are forbidden.
+  Enforced by ArchUnit (NFR1/NFR2), not merely drawn.
+- **The one rule that shapes everything else**: application services never call one
+  another. A use case is one transaction, and nesting them is what produced the
+  `REQUIRES_NEW` connection-pool defect recorded in DEC-13.
+- **The materialise → book handoff** (DEC-1): two **sequential** transactions
+  orchestrated by a *non-transactional* coordinator, not a nested pair. The interaction
+  diagram must show the first transaction **committing** before the second opens.
+- **Synchronicity**: every interaction is synchronous and in-process. There is no queue,
+  no event, no second service — stated explicitly because its absence is a decision
+  (see DEC: declined — outbox/events) rather than an omission.
+- **External interactions**: exactly one — PostgreSQL. Admin authentication is a black
+  box at the edge (§10) and is the only other boundary.
+- **Failure semantics per hop**, including the commit-phase case where the outcome is
+  indeterminate and the API returns `503` rather than guessing (spec §7.9).
+
+---
+
 ## 7. Deep dives
 
 The brief explicitly requires two of these to be documented.
@@ -108,7 +153,7 @@ The brief explicitly requires two of these to be documented.
 
 ---
 
-## 8. Decision log
+## 8. Major design decisions
 
 Lightweight ADR format. The **Consequences** column is the important one: it is what
 separates a decision log from a feature list.
