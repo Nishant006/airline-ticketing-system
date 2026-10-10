@@ -143,6 +143,15 @@
     <resources>
       <resource>
         <directory>src/main/resources</directory>
+        <!--
+          db/migration is contributed EXCLUSIVELY by the db/migrations resource below.
+          Without this exclusion two resource roots could both write to the same
+          classpath path; Maven would silently let copy order decide which migration
+          set survives. Enforced by the build rather than left as a convention.
+        -->
+        <excludes>
+          <exclude>db/migration/**</exclude>
+        </excludes>
       </resource>
       <resource>
         <directory>db/migrations</directory>
