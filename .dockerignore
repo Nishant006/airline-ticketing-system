@@ -1,5 +1,6 @@
 .git/
 .notes/
+features/
 target/
 .idea/
 *.iml
