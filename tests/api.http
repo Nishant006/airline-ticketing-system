@@ -1,0 +1,48 @@
+@baseUrl = http://localhost:8080
+
+### Create a schedule; re-running creates a fresh number and tomorrow's UTC date
+< {%
+  client.global.set("flightNumber", "HT" + Date.now().toString().slice(-6));
+  client.global.set("travelDate", new Date(Date.now() + 86400000).toISOString().slice(0, 10));
+%}
+POST {{baseUrl}}/api/v1/admin/flight-schedules
+Content-Type: application/json
+
+{
+  "flightNumber": "{{flightNumber}}",
+  "originCode": "DXB",
+  "destinationCode": "LHR",
+  "departureTime": "09:30",
+  "arrivalTime": "13:45",
+  "aircraftId": "A320-001",
+  "daysOfOperation": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"]
+}
+
+### Search
+GET {{baseUrl}}/api/v1/flights?originCode=DXB&destinationCode=LHR&date={{travelDate}}
+
+### Seat map
+GET {{baseUrl}}/api/v1/flights/{{flightNumber}}/seat-map?date={{travelDate}}
+
+### Book; repeat before cancelling to receive 409
+POST {{baseUrl}}/api/v1/bookings
+Content-Type: application/json
+
+{
+  "flightNumber": "{{flightNumber}}",
+  "flightDate": "{{travelDate}}",
+  "passengers": [{"name": "Alpha", "seat": "1A"}, {"name": "Beta", "seat": "1B"}]
+}
+
+> {%
+  if (response.status === 201) client.global.set("bookingReference", response.body.bookingReference);
+%}
+
+### Cancel; repeat to receive 409, then re-run booking to reuse the seats
+POST {{baseUrl}}/api/v1/bookings/{{bookingReference}}/cancel
+
+### Readiness and liveness
+GET {{baseUrl}}/actuator/health/readiness
+
+###
+GET {{baseUrl}}/actuator/health/liveness

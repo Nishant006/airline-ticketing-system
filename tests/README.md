@@ -7,7 +7,7 @@ genuinely do not belong on the classpath:
 
 | Path | Purpose |
 |---|---|
-| `api.http` | Executable request collection (IntelliJ HTTP Client / VS Code REST Client) |
+| `api.http` | IntelliJ HTTP Client collection with rolling UTC dates and response variables |
 | `smoke.sh` | curl-based end-to-end walkthrough: seed → search → seat map → book → cancel |
 
 ## Automated test layout (`src/test/java`)
@@ -19,3 +19,15 @@ genuinely do not belong on the classpath:
 
 This split is deliberate: `./mvnw test` stays fast and runnable without a Docker
 daemon, while `./mvnw verify` runs everything including the concurrency evidence.
+
+`SearchPerformanceIT` and `MixedLoadIT` share one 500-schedule/600,000-allocation
+fixture and write `target/search-performance.txt` and `target/mixed-load.txt`.
+The latter uses exact 25:1 traffic and reports overload 503 separately from success;
+short local closed-loop phases are not production capacity certification.
+`ReadIsolationIT` exhausts the physical read/write pools and exercises PostgreSQL
+SQL/lock cancellation, independent booking capacity and connection recovery.
+
+With the application ready, run `bash tests/smoke.sh http://localhost:8080`.
+The script needs Bash, curl and Python 3 (standard library only). It creates a fresh
+schedule for tomorrow, checks every response and releases its final test booking.
+Its schedule and cancelled booking history remain as explicit walkthrough data.

@@ -1,297 +1,188 @@
-# High-Level Design — Airline Ticketing System
-
-> **Status:** outline. Sections are filled in during the design pass.
-
----
-
-## Table of contents
-
-| § | Section | Maps to brief requirement |
-|---|---|---|
-| 1 | [Problem understanding](#1-problem-understanding) | — |
-| 2 | [Requirements](#2-requirements) | Functional / Non-functional requirements |
-| 3 | [Assumptions](#3-assumptions) | HLD → "Assumptions" |
-| 4 | [Core entities](#4-core-entities) | Database design |
-| 5 | [API surface](#5-api-surface) | API design |
-| 6 | [Architecture — as built](#6-architecture--as-built) | HLD → "Overall architecture", "Components", "Service interactions", "Request flow" |
-| 7 | [Deep dives](#7-deep-dives) | HLD → "Flight generation strategy", "Concurrency strategy" |
-| 8 | [Major design decisions](#8-major-design-decisions) | HLD → "Major design decisions" |
-| 9 | [Scale-out evolution — NOT IMPLEMENTED](#9-scale-out-evolution--not-implemented) | Evaluation → "Scalability considerations" |
-| 10 | [Black boxes](#10-black-boxes) | Scope → "treated as a black box" |
-
-### Deliverable coverage — the brief's eight mandated HLD sections
-
-The brief lists exactly what an HLD *"should include"*. Each item is mapped to the
-section that satisfies it, so coverage can be checked without reading the document
-first. Nothing here is implied by a neighbouring section: *"Service interactions"* in
-particular is **not** the same question as *"Components"* (what the parts are) or
-*"Request flow"* (the path of one request) — it is the contract governing which part may
-call which, and under what transactional and failure semantics.
-
-| # | Brief mandate | Section |
-|---|---|---|
-| 1 | Overall architecture | §6, §6.1 Deployment view |
-| 2 | Components | §6.2 Component view |
-| 3 | **Service interactions** | **§6.4 Service interactions** |
-| 4 | Request flow | §6.3 Request flows |
-| 5 | Major design decisions | §8 Major design decisions |
-| 6 | Assumptions | §3 Assumptions |
-| 7 | Concurrency strategy | §7.2 Concurrency strategy |
-| 8 | Flight generation strategy | §7.1 Flight instance generation strategy |
-| + | *"Architecture diagrams are encouraged"* | `hld/diagrams/` — C4 context + container, ER, two sequence diagrams |
-
----
-
-> **Reading note.** §6 describes **what is actually built and running in this
-> repository**. §9 describes how the same design would evolve under load that this
-> assignment does not require. The two are kept rigorously separate so that nothing
-> in §9 can be mistaken for an implemented capability.
-
----
-
-## 1. Problem understanding
-
-*To be completed.*
-
----
-
-## 2. Requirements
-
-### 2.1 Functional — in scope
-
-*To be completed.*
-
-### 2.2 Non-functional — in scope
-
-*To be completed.*
-
-### 2.3 Below the line — explicitly out of scope
-
-*To be completed.*
-
----
-
-## 3. Assumptions
-
-*To be completed.*
-
----
-
-## 4. Core entities
-
-*To be completed. Entity-relationship diagram and the reasoning behind each table.*
-
----
-
-## 5. API surface
-
-*To be completed.*
-
----
-
-## 6. Architecture — as built
-
-### 6.1 Deployment view
-
-*To be completed — must cover:*
-
-- **`N ≥ 2` stateless application instances behind a load balancer, one PostgreSQL**
-  (DEC-19). This is the single most consequential statement in the HLD, because every
-  concurrency claim in §7.2 is conditional on it. Drawing one box labelled "app" would
-  quietly assume the easy case.
-- **Why the topology was decided at all**, given the brief never mentions deployment:
-  silence is not permission to assume a single process, because a rolling deployment
-  alone forces `N = 2` during every release (DEC-19, option A).
-- **What the graded artifact actually runs**: one application container plus PostgreSQL
-  via `docker compose` (DEC-16), because the interviewer stated they will bring up a
-  single instance. The diagram must make the distinction visible — *design for `N`,
-  ship `1`* — and state why they are not in tension: **instance count is not an input to
-  correctness, because every invariant is enforced in PostgreSQL** (spec §7.1).
-- **Rules D1–D7** (DEC-19) as the constraints the rest of the design is built under,
-  with the discharge point for each. D5 (concurrent Flyway startup) and D6 (the
-  connection budget is `N × pool`) are the two that are invisible at `N = 1` and
-  therefore the two a reviewer will probe.
-- **What is deliberately absent from the diagram**: no Redis, no message broker, no
-  distributed lock manager, no read replica, no service mesh. Each absence is a decision
-  with arithmetic behind it (DEC-20, §9), not a gap.
-
-### 6.2 Component view
-
-*To be completed — must cover:*
-
-- **Package-by-feature boundaries** (`schedule`, `search`, `booking`, `seatmap`) with
-  layering inside each, enforced by ArchUnit rather than drawn (DEC-10).
-- **One deployable, two namespaces** (DEC-23): the admin and customer surfaces are
-  separated at `/api/v1/admin/*` with a documented authentication seam, but are not two
-  services. The component view must show the seam and state the flip threshold —
-  independent load or independent availability requirements — so the boundary reads as
-  reversible rather than merely deferred.
-- **Stateless by construction** (spec NFR3): no session, no server-side cart, no hold
-  state. This is what makes the `N` boxes in §6.1 interchangeable.
-
-### 6.3 Request flows
-
-One flow per functional requirement:
-
-| # | Flow | Status |
-|---|---|---|
-| 1 | Create flight schedule (back office) | *to be completed* |
-| 2 | Search flights | *to be completed* |
-| 3 | View seat map | *to be completed* |
-| 4 | Create booking | *to be completed* |
-| 5 | Cancel booking | *to be completed* |
-
----
-
-### 6.4 Service interactions
-
-*To be completed — must cover:*
-
-- **Call matrix**: which component may call which, and the directions that are forbidden.
-  Enforced by ArchUnit (NFR1/NFR2), not merely drawn.
-- **The one rule that shapes everything else**: application services never call one
-  another. A use case is one transaction, and nesting them is what produced the
-  `REQUIRES_NEW` connection-pool defect recorded in DEC-13.
-- **The materialise → book handoff** (DEC-1): two **sequential** transactions
-  orchestrated by a *non-transactional* coordinator, not a nested pair. The interaction
-  diagram must show the first transaction **committing** before the second opens.
-- **Synchronicity**: every interaction is synchronous and in-process. There is no queue,
-  no event, no second service — stated explicitly because its absence is a decision
-  (see DEC: declined — outbox/events) rather than an omission.
-- **External interactions**: exactly one — PostgreSQL. Admin authentication is a black
-  box at the edge (§10) and is the only other boundary.
-- **Failure semantics per hop**, including the commit-phase case where the outcome is
-  indeterminate and the API returns `503` rather than guessing (spec §7.9).
-
----
-
-## 7. Deep dives
-
-The brief explicitly requires two of these to be documented.
-
-### 7.1 Flight instance generation strategy
-
-*To be completed — must cover:*
-
-- The brief's three options, all three evaluated, and the **hybrid** chosen (DEC-1).
-  This is the one decision the brief says **must** be documented, so the rejected
-  options must appear, not just the winner.
-- **Why the rolling window defeats full materialisation**: 365 days from *today* moves
-  every midnight, so a materialised set is correct for one day and then decays. Keeping
-  it correct needs a daily job — and **a `@Scheduled` job on `N` instances fires `N`
-  times**, dragging in leader election or ShedLock (rule D2). The storage choice would
-  have created a distributed-coordination problem the domain does not have.
-- **Why the row still exists on the write path**: without it the seat invariant has no
-  foreign-key target (DEC-2, DEC-3).
-- The **circular-`404` trap** a lazy strategy creates on read paths, and its resolution:
-  a missing row means *fully available*, never *not found* (spec §8.1.3, API-4).
-- **Determinism across instances**: the projection is computed independently by every
-  instance and cannot diverge, because schedules are immutable (spec §A5).
-
-### 7.2 Concurrency strategy
-
-*To be completed — must cover:*
-
-- All **five mechanisms the brief names**, mapped explicitly to how they are addressed —
-  including that *versioning* and *optimistic locking* are the same mechanism, and that
-  *transactions* are the substrate rather than an alternative (DEC-2).
-- The **partial unique index** as the single enforcement point, with the
-  `WHERE status = 'BOOKED'` predicate shown and its load-bearing role explained: it is
-  what lets a cancelled row persist for history while leaving the seat immediately
-  rebookable, so FR9 needs no deletion anywhere.
-- **Why this is the strongest available answer under `N` instances**: every alternative
-  requires the instances to cooperate; this one does not care how many there are.
-- **No version column and no retry for seat conflicts** — a taken seat is taken, so the
-  answer is `409`, immediately. The two narrow places retry *does* exist (PNR collision,
-  deadlock `40P01`) must be named so the absence elsewhere reads as deliberate.
-- **Transaction topology**: materialise and book are two *sequential* transactions, not a
-  nested pair, and the three failures that shape avoids (spec §7.5).
-- The **third write path** — schedule creation (spec §7.11) — which is where a
-  concurrency section is usually incomplete.
-- **Why single-JVM concurrency tests prove the distributed property**: the threads
-  contend on the same index rows separate instances would contend on, precisely because
-  enforcement is outside the JVM.
-
-### 7.3 Seat availability computation
-
-*To be completed — must cover:*
-
-- Availability as a **set difference**, `seats(aircraft) − booked(instance)`, with no
-  seat table — and the row-count arithmetic that justifies it (DEC-3).
-- The **four load-bearing properties** of the search query, especially
-  `bs.status='BOOKED'` in the `ON` rather than the `WHERE` (spec §8.1.4).
-- **Recomputed, not maintained**: why a cached availability counter would be both a
-  second source of truth and a per-flight hot row that serialises bookings sharing no
-  seat (spec §8.1.5).
-- **Which staleness was granted and which one exists**: the design has no server-side
-  staleness at all; the client-side window is unavoidable, exists at `N = 1`, and is
-  closed by the `409` body naming the lost seats, not by a fresher read (DEC-20, DEC-21).
-
----
-
-## 8. Major design decisions
-
-Lightweight ADR format. The **Consequences** column is the important one: it is what
-separates a decision log from a feature list.
-
-| # | Decision | Alternatives considered | Rationale | Consequences |
-|---|---|---|---|---|
-| | *to be completed* | | | |
-
----
-
-## 9. Scale-out evolution — NOT IMPLEMENTED
-
-> ⚠️ **Nothing in this section is implemented.** It documents how the design would
-> evolve if traffic grew, and — more usefully — *what would have to be measured first*
-> to justify each change. It is included because the evaluation criteria list
-> "scalability considerations"; it is fenced off because shipping a distributed
-> architecture diagram over a modular monolith would misrepresent what was built.
-
-*To be completed — must cover, in this order:*
-
-1. **The measured envelope first** (DEC-20): ~10k DAU, 500 schedules, 25:1 read:write,
-   giving **~6 QPS peak search** and **~0.25 QPS peak booking**. Every item below is
-   rejected against these numbers, not against taste. Stating the arithmetic before the
-   options is what makes the rejections auditable.
-2. **What is rejected and why** — caching, read replicas, CQRS, sharding, partitioning.
-   Each needs its own line: the reason caching is declined is *not* the reason sharding
-   is declined, and collapsing them into "not needed at this scale" wastes the section.
-   Caching carries an extra reason that is not about load at all: FR6 says *real-time*,
-   and `N` instances would hold `N` divergent seat maps (DEC-4, rule D3).
-3. **What is safe to cache first if search ever became hot**: immutable reference data
-   (airport, aircraft), which is the only category that cannot diverge across instances
-   and the only one needing no invalidation protocol (spec §4.2.1).
-4. **The first real ceiling, which is not throughput**: the connection budget is
-   `N × maximumPoolSize` against PostgreSQL's `max_connections`. Both numbers are now
-   **pinned rather than inherited** — `max_connections=100` in `docker-compose.yml`,
-   `maximumPoolSize=10` in `application.yml` — which leaves 87 usable after reserved and
-   migration headroom, so the ceiling is `N = 8` and the planned `N = 4` sits at less
-   than half of it. Beyond that: `FATAL: sorry, too many clients already`.
-   **This failure is configuration-shaped, not load-shaped** — it appears when the
-   replica count changes, so no amount of single-instance load testing finds it. It is
-   also the reason both values carry their derivation at their definition site (rule D8):
-   a pass-4 audit found the pool had drifted to 20, which would have capped the cluster
-   at `N = 4` *without changing a single line of application code*.
-   PgBouncer is the named next step, deliberately not built (rule D6, spec §7.5.1).
-5. **When the monolith should split** (DEC-23): the threshold is independent load or
-   independent availability requirements, not code size. Until one of those appears,
-   splitting buys a distributed-consistency problem where a local transaction suffices.
-6. **What would flip the flight-generation strategy** (DEC-1): a requirement to list all
-   future flights without a route filter, or mutable schedules with history.
-7. **A runtime ceiling that is not a capacity ceiling**: virtual threads are enabled
-   (spec §7.5.2), and on Java 21 a virtual thread blocking inside a `synchronized` block
-   pins its carrier. Hikari's checkout path avoids `synchronized`, so the hot path is
-   clear today — but this is a property of a dependency's internals, not of this design,
-   and the mitigation is a JDK bump rather than a redesign: JEP 491 removes pinning in
-   Java 24. Named here because it is the kind of ceiling that is invisible until it is
-   sudden.
-8. **What scaling does *not* change**: the seat invariant. It is enforced below the
-   application, so it survives every item above unmodified — which is the strongest
-   scalability statement the design can make, and the reason this section is short.
-
----
-
-## 10. Black boxes
-
-*To be completed.*
+# High-level design
+
+Implemented architecture: 2026-10-20. The nine functional requirements are covered by
+API and PostgreSQL tests. Reviewer-startup and final delivery checks are tracked in the
+execution log rather than inferred from this design.
+
+## Requirements and scope
+
+A single airline's back office creates immutable schedules. Customers search by
+airports/date, inspect aircraft seat maps, book selected seats and cancel a booking.
+Airports and aircraft are seeded, not managed through APIs. Bookings cover one flight.
+The window contains 365 UTC dates starting today.
+
+The clarified envelope is 10k DAU, 500 schedules, 25:1 search/booking traffic, a
+one-second search target, and strongly consistent booking. Search may become stale if
+the booking API explains a seat conflict. DAU alone does not establish a QPS estimate.
+
+Out of scope: payments/refunds, pricing, notifications, user accounts, timezone
+conversion, seat holds, partial cancellation, connecting flights, search sort/filter
+controls and additional listing/retrieval APIs.
+
+## Overall architecture and components
+
+```mermaid
+flowchart LR
+    Admin[Trusted back office] --> API[Spring MVC API]
+    Customer[Customer] --> API
+    API --> Schedule[Schedule service]
+    API --> Flight[FlightService]
+    API --> Booking[BookingService]
+    API --> Cancel[CancellationService]
+    Booking --> Materializer[FlightInstanceService]
+    Booking --> Writer[BookingTransactionService]
+    Schedule --> Repositories[Flat Spring Data JPA repositories]
+    Flight --> Repositories
+    Materializer --> Repositories
+    Writer --> Repositories
+    Cancel --> Repositories
+    Repositories --> Pools[Read 5 / write 10 connection routing]
+    Pools --> DB[(PostgreSQL)]
+    Flyway[Flyway migrations] --> DB
+```
+
+One Java 21 / Spring Boot deployable; PostgreSQL is its only external dependency.
+The Java root uses conventional controller/service/repository/entity packages, separate
+DTO request/response packages, `service.impl`, immutable application `model` records,
+and configuration/exception/validation packages.
+Packages are organized by layer, not by business feature.
+MVC handles transport; services define business rules and transactions; Spring Data JPA
+repositories handle persistence. Narrow service interfaces exchange application models,
+not JPA entities or API DTOs. Controllers map transport records and implementations
+map persistence objects internally. `repository/` contains flat Spring Data interfaces,
+not pass-through adapters. This deliberately favors conventional layered Spring design
+over a strictly persistence-independent core. Entities never become API response bodies.
+Lombok supplies component constructors/logging and
+entity getters. Explicit local types are used instead of `var`.
+
+The same artifact may run behind a load balancer as multiple stateless instances.
+The delivered Compose setup defaults to one application and one database. There are
+no JVM-local seat locks, sessions, mutable seat caches, broker or leader-election jobs.
+Admin authentication belongs to a trusted external boundary; this backend does not
+implement it or pretend that an `/admin` URL authenticates callers.
+
+## Service interactions and request flows
+
+| Flow | Interaction and failure boundary |
+|---|---|
+| Create schedule | Controller -> schedule service -> reference checks -> schedule and day inserts in one transaction. Any failure rolls both back. |
+| Search | Controller -> flight query -> one route/day aggregate including active allocation count. No writes. |
+| Seat map | Resolve operating schedule/date -> read active labels -> derive complete configured map. Missing instance means fully available. |
+| Book | Coordinator validates -> short materialization transaction commits -> booking transaction inserts booking and sorted allocations -> commit or full rollback. Known seat conflicts are reported after rollback. |
+| Cancel | Lookup with instance/schedule -> check UTC departure/status -> read assigned labels -> conditional booking status update -> release all seats in one transaction. Release-count mismatch rolls everything back. |
+
+All interactions are synchronous and in-process except database access. Separate
+transactional beans make proxy boundaries explicit. Materialization is not nested in
+the booking transaction and never needs a second simultaneous connection. The booking
+coordinator rejects ambient transactions with `Propagation.NEVER` before persistence.
+JSON negotiation occurs before controller invocation; strict HH:mm parsing prevents
+invalid 24:00 clocks being normalized into midnight.
+
+## Flight generation strategy
+
+Hybrid generation projects bookable flights from immutable schedules and the requested
+date. Reads do not enumerate a year or materialize missing rows. First booking creates
+one instance with `UNIQUE(schedule_id, flight_date)`; later bookings reuse it.
+
+Full materialization is allowed by the assignment and manageable at this scale, but
+requires maintaining a rolling horizon. Dynamic-only storage is possible but complicates
+allocation references. Hybrid keeps the rolling window a predicate while giving bookings
+a stable foreign-key target.
+
+## Concurrency strategy
+
+The authoritative active-seat invariant is:
+
+```sql
+CREATE UNIQUE INDEX uq_booking_seat_active
+    ON booking_seat (flight_instance_id, seat_label)
+    WHERE status = 'BOOKED';
+```
+
+Canonical seat validation prevents alternate labels identifying the same seat.
+Multi-seat inserts follow one deterministic order to reduce deadlock risk. Uniqueness
+and atomic transactions prevent overselling across any number of application instances.
+A seat conflict aborts the whole booking and returns 409; it is not retried as a transient
+failure. READ COMMITTED is sufficient for this schema-enforced invariant.
+
+Pessimistic/optimistic inventory locking are valid alternatives, but would add lockable
+inventory rows or serialize unrelated seats through the parent flight. No availability
+counter, `@Version`, distributed lock or reservation state is needed here.
+
+Cancellation changes booking and allocation state atomically. Released historical rows
+leave the partial index and allow reuse. A concurrent booker can succeed after release
+commits or encounter the still-active owner; neither may produce partial allocation.
+
+## Major design decisions and assumptions
+
+See [the decision log](../features/ATS-1/decision-log.md) for alternatives.
+
+- One immutable schedule per flight number is an explicit identity assumption.
+- UTC schedule time plus UTC flight date defines departure. No airport-local inference.
+- `[today, today + 365)` contains exactly 365 dates, including across leap years.
+- Arrival time may precede departure time; the API does not compute duration/arrival date.
+- Booking uses UUID references; passenger count is derived from seat allocations.
+- The user selected 409 on repeat cancellation and on cancellation after departure.
+- Spring Data JPA supplies repository operations and a JPQL search projection. The
+  instance upsert is native SQL; database constraints remain authoritative. Flyway owns
+  schema evolution; Hibernate validates it and OSIV is disabled.
+- POST booking is not idempotent: a lost response can leave the caller without its
+  reference. No extra recovery/idempotency API is claimed to exist.
+
+## Operational limits and scale considerations
+
+Pool acquisition timeout is not an end-to-end search deadline. Measure full HTTP latency
+with 500 schedules and documented data/load. Query-count regressions and EXPLAIN help
+diagnose performance; small-table sequential scans are legitimate.
+
+Spring's `LazyConnectionDataSourceProxy` routes read-only search/maps to a dedicated
+five-connection pool on the same primary: 250 ms acquisition, 500 ms PostgreSQL statement
+timeout and 250 ms lock timeout. Ordinary transactions retain a separate ten-connection
+pool and 20 s acquisition. Booking lookup/conflict enrichment use write capacity;
+lookup within a read-only seat-map transaction joins that read transaction. Saturated
+reads return explicit 503 rather than starving booking connections. Physical-pool
+exhaustion and SQL/lock cancellation/recovery are exercised by `ReadIsolationIT`.
+The combined maximum is 15 per replica, 45 for three against the local 100 limit.
+Database budgets do not bound HTTP queueing, network or cold connection establishment.
+
+Total replica pool demand must fit PostgreSQL's connection budget. A pooler, replicas,
+cache or queue is a future option only when measurements justify it, not implemented
+infrastructure. Live availability is snapshot-consistent, not a seat hold.
+Readiness includes database connectivity, while liveness does not depend on the database.
+
+Search projects four fields in one SQL statement without hydrating entities. An explicit
+entity graph fetches the aircraft needed for flight resolution; a seat map then reads
+active labels, with no per-seat query loop. IDENTITY-based seat saves execute individual
+inserts in deterministic label order; `saveAllAndFlush` is not asserted to be batching.
+Booking latency may vary under contention as allowed by the clarified requirements.
+
+## Evidence and deployment boundaries
+
+`CrossInstanceIT` runs two independent Spring web contexts, connection pools and HTTP
+ports against one PostgreSQL primary. Concurrent same-seat POSTs produce one 201 and
+one 409; either context can cancel and rebook the committed allocation. These are
+independent contexts in one JVM, not a claim of a multi-host deployment benchmark.
+Compose additionally permits separate JVM replicas using a host-port range. An
+isolated three-container acceptance run produced one 201 and two 409s for the same
+seat, followed by successful cancellation and rebooking through different JVMs.
+
+The same test stops the database: liveness remains 200, readiness becomes 503 and
+booking returns an explicit 503 with an unconfirmed-outcome warning. Health details
+are not exposed to unauthenticated callers. Correlation identifiers are validated,
+echoed and cleared from MDC after requests; passenger names and payloads are not logged.
+
+Search was measured through real HTTP with 500 schedules and 600,000 synthetic
+active/historical allocations: the post-review eight-worker p95 was 7.332 ms.
+The separate 25:1 mixed run at 16/64/192 clients measured search p95
+15.049/34.228/97.745 ms. All 816 disjoint bookings succeeded; the 192-client phase
+shed one of 14,400 searches with 503. No measured search response exceeded one second.
+These phases lasted 0.879/2.268/6.120 seconds, not a sustained capacity certification. See
+[LLD](../lld/design.md#query-audit-and-measured-performance) for dataset,
+actual SQL plan and limitations. No lazy-loading API is presently necessary; if scale
+changes, bounded pagination/lazy loading is a measured follow-up, not an existing
+endpoint or unlimited-throughput claim.
+
+The backend contains no authentication. Deployment must restrict the administrative
+route at a trusted gateway; UUID references are identifiers, not an authorization
+system. Payments and other excluded integrations are not called, so no fabricated
+black-box client or static payment step is inserted into a booking.

@@ -1,8 +1,12 @@
 package com.airline.reservation;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.simple.JdbcClient;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Smoke test: the Spring context starts and every Flyway migration applies cleanly against a real
@@ -15,6 +19,16 @@ import org.springframework.context.annotation.Import;
 @SpringBootTest
 class AirlineReservationApplicationIT {
 
-  @Test
-  void contextLoadsAndMigrationsApply() {}
+    @Autowired
+    private JdbcClient jdbc;
+
+    @Test
+    void contextLoadsAndMigrationsApply() {
+        assertThat(
+                jdbc.sql("SELECT count(*) FROM flyway_schema_history WHERE success")
+                        .query(Integer.class)
+                        .single())
+                .isGreaterThanOrEqualTo(2);
+        assertThat(jdbc.sql("SELECT count(*) FROM airport").query(Integer.class).single()).isEqualTo(4);
+    }
 }

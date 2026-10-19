@@ -1,5 +1,10 @@
 # Airline Ticketing System — Locked Plan (D1–D10)
 
+> **SUPERSEDED on 2026-10-19.** Historical working notes only. The authoritative brief
+> remains `assignment-brief.md`; current design choices are in
+> `features/ATS-1/spec.md` and `features/ATS-1/decision-log.md`. Do not implement the
+> counters, locking, time semantics, endpoints or migration layout proposed below.
+
 > **PRIVATE.** This file is gitignored. It contains interview strategy and
 > evaluation commentary that must never reach a reviewer.
 
@@ -275,7 +280,7 @@ Cancellation is **idempotent**.
 5. **Concurrency integration tests** — the headline deliverable.
 
 Notes:
-- Tests live in `src/test/java` (Maven convention). `tests/` holds the manual
+- Tests live in `../../src/test/java` (Maven convention). `tests/` holds the manual
   API collection + smoke script. **This deviation must be stated in the README.**
 - Flyway migrations run under test ⇒ migrations are themselves tested.
 - A `RetryListener` counts retries → hard numbers for the D4 trade-off.
@@ -288,11 +293,11 @@ Notes:
 
 ## D8. Repo & docs
 
-Layout matches the brief exactly: `README.md`, `hld/`, `lld/`, `src/`, `db/`,
+Layout matches the brief exactly: `../../README.md`, `hld/`, `lld/`, `src/`, `db/`,
 `tests/`, `docker-compose.yml`.
 
 - 9 Mermaid diagrams.
-- Decision Log: 10 ADR-lite entries **inside `hld/architecture.md`**.
+- Decision Log: 10 ADR-lite entries **inside `../../hld/architecture.md`**.
   Emphasis on the **Consequences** column — that is what separates a decision
   log from a feature list.
 - Markdown + Mermaid **and** a generated `architecture.pdf`.
@@ -323,7 +328,7 @@ what was built:
 ## D9. Build & run
 
 - Three documented run modes; the headline is one-command `docker compose up`.
-- Multi-stage `Dockerfile` + Postgres 16 service.
+- Multi-stage `../../Dockerfile` + Postgres 16 service.
 - Spotless (google-java-format) bound to `verify`.
 - JaCoCo report-only.
 - **Virtual threads enabled** — with the honest note that HikariCP is the real

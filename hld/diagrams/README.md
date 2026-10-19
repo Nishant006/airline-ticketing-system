@@ -1,10 +1,12 @@
-# Diagrams
+# Architecture diagram
 
-Mermaid sources for the diagrams embedded in [`../architecture.md`](../architecture.md).
+[`architecture.svg`](architecture.svg) is the standalone architecture diagram.
+The equivalent editable Mermaid flow is embedded in
+[`../architecture.md`](../architecture.md). The HLD PDF is a text export of that
+document; use the SVG or GitHub Mermaid rendering for the diagram.
 
-Mermaid is used rather than exported images so that the diagrams are diffable,
-reviewable in a pull request, and render natively on GitHub.
+On macOS, regenerate the PDF after editing the HLD:
 
-| File | Diagram |
-|---|---|
-| *to be added* | |
+```bash
+/usr/sbin/cupsfilter -i text/plain -m application/pdf hld/architecture.md > hld/architecture.pdf
+```

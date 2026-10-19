@@ -1,7 +1,7 @@
 # Assignment Brief — VERBATIM SOURCE OF TRUTH
 
 > **Do not edit. Do not paraphrase.** This is the exact text supplied by the hiring team.
-> Every audit of `spec.md`, `hld/`, `lld/`, `db/` and `README.md` must be performed
+> Every audit of `spec.md`, `../../hld`, `lld/`, `db/` and `README.md` must be performed
 > **against this file**, section by section, line by line.
 >
 > Stored under `.notes/` (gitignored) deliberately: the submitted repository should not

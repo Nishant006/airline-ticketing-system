@@ -1,85 +1,41 @@
 spring:
   application:
     name: airline-reservation
-
   lifecycle:
-    # Bounded: a booking transaction is short. Waiting longer than this means
-    # something is wedged, and holding up the deploy will not unwedge it.
     timeout-per-shutdown-phase: 25s
-
   datasource:
-    # reWriteBatchedInserts lets the pgJDBC driver collapse a batch of INSERTs
-    # into a single multi-row statement. Relevant because a booking inserts one
-    # row per seat.
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/airline?reWriteBatchedInserts=true}
     username: ${SPRING_DATASOURCE_USERNAME:airline}
     password: ${SPRING_DATASOURCE_PASSWORD:airline}
     hikari:
-      pool-name: airline-pool
-      # DERIVED, not chosen: spec §7.5.1 sizes this from the database, not the
-      # instance. Budget is N × maximumPoolSize against PostgreSQL max_connections
-      # (100, less 3 reserved, less 10 headroom for Flyway/admin = 87 usable).
-      # At the planned ceiling of N = 4 instances: 4 × 10 = 40. Raising this
-      # number silently lowers the instance count the cluster can support.
-      # ConnectionBudgetTest asserts this value against that derivation.
+      pool-name: airline-write-pool
+      # Size the combined pools of all replicas below the database connection limit.
       maximum-pool-size: 10
-      # DERIVED, not defaulted: spec §7.5.2. Virtual threads remove the Tomcat
-      # worker pool's accidental admission limit, so this pool IS the system's
-      # bound and this timeout IS its failure mode. Hikari's 30s default would
-      # mean a half-minute wait ending in a 500; 10s sheds load while still
-      # riding out a lock convoy. SQLTransientConnectionException maps to 503.
-      # DERIVED, not chosen: spec §7.5.3 / DEC-27. Tuned for the BOOKING path, which
-      # the hiring team said may take longer under load ("ultimate stability is key,
-      # the time can change based on load and concurrent attempts"). Search does NOT
-      # inherit this budget -- it is bounded at the transaction instead
-      # (@Transactional(readOnly = true, timeout = 2)), which is what stops the 25:1
-      # dominant read traffic from holding connections away from booking.
       connection-timeout: 20000
-
-  jpa:
-    hibernate:
-      # Flyway owns the schema. Hibernate only verifies that the entity mapping
-      # agrees with it, and fails fast at startup if it does not.
-      ddl-auto: validate
-    # No lazy loading in the view layer: every query is deliberate.
-    open-in-view: false
-    properties:
-      hibernate:
-        jdbc:
-          batch_size: 50
-        order_inserts: true
-        order_updates: true
-        batch_versioned_data: true
-
+      transaction-isolation: TRANSACTION_READ_COMMITTED
+      connection-init-sql: SET TIME ZONE 'UTC'
   flyway:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: false
-
-  # Virtual threads: deliberately OFF. Stated rather than omitted, so it is clear
-  # this was evaluated and rejected. See spec §7.5.2 / DEC-29. Peak search is
-  # ~6 QPS against Tomcat's 200 platform workers -- three orders of magnitude
-  # below where virtual threads do anything -- while on Java 21 a synchronized
-  # block still pins the carrier (JEP 491 lands in 24). Keeping the platform
-  # pool also keeps its 200-worker admission limit, which DEC-27 relies on to
-  # bound queue depth. The brief: "Performance optimizations are not required."
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
   threads:
     virtual:
       enabled: false
-
   jackson:
     default-property-inclusion: non_null
 
 server:
   port: 8080
-  # Rolling deployments are the dominant source of indeterminate booking
-  # outcomes under a multi-instance topology (spec §5, §7.2) -- far more common
-  # than a commit-phase crash. On SIGTERM, stop accepting new requests and let
-  # in-flight ones finish rather than dropping the client's connection.
   shutdown: graceful
   error:
-    # Errors are returned as RFC 9457 ProblemDetail documents from the
-    # exception handlers; the servlet container's default error page is noise.
     include-message: never
     include-stacktrace: never
 
@@ -91,21 +47,13 @@ management:
   endpoint:
     health:
       show-details: when-authorized
-      # Liveness and readiness answer different questions and must not be
-      # conflated (spec §5). Liveness: "kill this process?" Readiness: "route
-      # traffic here?" A database outage must fail readiness (leave the load
-      # balancer rotation) WITHOUT failing liveness -- restarting cannot reach
-      # a database that is down, and restarting every instance at once turns a
-      # recoverable outage into a thundering herd.
       probes:
         enabled: true
-  health:
-    # Readiness tracks the database, because an instance that cannot reach
-    # PostgreSQL can serve no endpoint in this system.
-    readinessstate:
-      enabled: true
-    livenessstate:
-      enabled: true
+      group:
+        readiness:
+          include: readinessState,db
+        liveness:
+          include: livenessState
 
 springdoc:
   swagger-ui:
@@ -114,16 +62,18 @@ springdoc:
 
 logging:
   pattern:
-    # correlationId is placed on the MDC by a servlet filter.
-    console: "%d{HH:mm:ss.SSS} %-5level [%X{correlationId:-}] %logger{36} - %msg%n"
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{instanceId:-local}/%X{correlationId:-}] %logger{36} - %msg%n"
   level:
     com.airline.reservation: INFO
+    org.hibernate.orm.jdbc.error: OFF
+    org.hibernate.engine.jdbc.spi.SqlExceptionHelper: OFF
 
-# Application-specific knobs. Deliberately externalised so that no business
-# constant (the 365-day booking window, retry counts) is hard-coded in Java.
 airline:
   booking:
-    # DERIVED from the brief: "bookings for up to one year from the current
-    # date" (FR4). Asserted by the booking-window boundary tests, not merely
-    # configured -- see spec §6.1 and rule D8.
     window-days: 365
+  datasource:
+    read:
+      maximum-pool-size: 5
+      connection-timeout-ms: 250
+      statement-timeout-ms: 500
+      lock-timeout-ms: 250

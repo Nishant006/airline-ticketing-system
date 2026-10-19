@@ -1,5 +1,44 @@
 # Execution Log — ATS-1
 
+> Entries before 2026-10-19 are historical, not evidence of current functionality or
+> approval. Current user choices and corrections are recorded in `spec.md` and
+> `decision-log.md`. Implementation progress and five-todo self-audits are appended here.
+
+## Current implementation
+
+| Date | Completed todos | Self-audit and correction |
+|---|---|---|
+| 2026-10-19 | 01-05: scope, UTC/window, API policies, draft corrections, environment | Audit 1: original brief SHA-256 unchanged; default and custom-port Compose configurations valid; Java 21 selected locally; Docker daemon reachable; whitespace clean. Removed contradictory SQL/time/locking/timeout claims. Ignoring `notes/` does not untrack its existing files; submission cleanup remains open. |
+| 2026-10-19 | 06-10: HLD/LLD baseline, schema, seeds, database proof | Audit 2: 8 PostgreSQL integration tests passed, including FR1/FR2 seeds, all seven tables, real partial-index rejection/reuse, independent instances and composite FK. Fixed residual README claims about Hibernate, lifecycle commands and sample schedules. Spotless and Compose configurations pass. |
+| 2026-10-19 | 11-15: domain/clock, schedule creation/proof, search/proof | Audit 3: 10 unit/web tests and 9 PostgreSQL tests passed. Concurrent schedule creation has one winner; an injected weekday constraint failure rolls back its parent and earlier days. Search uses one SQL statement, never materializes, handles zero availability and exact UTC/leap-year boundaries. Moved PostgreSQL exception classification out of the application service into its adapter. Brief unchanged; Spotless passes. |
+| 2026-10-19 | 16-20: seat map/proof, lazy instance creation, atomic booking, explicit conflicts | Audit 4: user-directed Spring Data JPA and root-level package-by-layer refactor completed; request/response DTOs are separate and no `var` remains. Clean suite: 17 unit/architecture plus 31 PostgreSQL cases passed; subsequent targeted checks cover booking visibility in search/seat map and one additional configuration guard. Search prepares one statement with no entity hydration; seat map prepares two with no lazy entity fetches. Concurrent first-instance creation has one ID; a blocked upsert sees the winner after commit. Sorted actual seat writes, full rollback and constraint-specific 409 are proven. Removed request-to-response DTO coupling, suppressed payload-bearing ORM error logs while retaining application errors, and fixed configuration that could shorten the agreed 365-date window. Brief unchanged. Cancellation API visibility remains part of the FR9 gate, not claimed by this gate. |
+| 2026-10-19 | Quality 01-05: imports, focused methods, persistence boundaries, measured queries, regression | Audit 5: 19 unit/architecture/source-convention and 32 PostgreSQL/HTTP tests pass. Replaced wildcard imports, guarded explicit local types/imports, split long orchestration methods, protected schedule-day collection. Search audit: 500 schedules, 600k allocation rows; HTTP p95 5.945 ms sequential / 7.555 ms at eight workers; actual SQL execution 1.150 ms, one query and no entity loads. Existing indexes suffice; no speculative tuning introduced. LLD records dataset, limits and conditional optimizations. |
+| 2026-10-20 | 21-25: booking contention, cancellation/races, HTTP contracts, safe logging | Audit 6: 19 unit/architecture plus 15 PostgreSQL/HTTP cases pass; two additional handler cases cover 503 indeterminate writes and sanitized 500 errors. Same-seat/set, reversed/overlapping/disjoint sets, full-flight and first-instance contention preserve atomic ownership. Cancellation is four statements, releases all seats, rolls back on injected failure, arbitrates concurrent cancels and allows rebooking. Specific protocol error codes, bounded correlation IDs, MDC cleanup and non-disclosure of passenger names are verified. Fixed catch-all conflict status mapping to an exhaustive enum switch. |
+| 2026-10-20 | 26-30: runtime, cross-instance proof, latency evidence, walkthrough, HLD | Audit 7: built the actual image and started an isolated healthy Compose project; public-HTTP walkthrough passed. Three separate container JVMs produced one 201/two 409s for the same seat and supported cross-JVM cancellation/rebooking. Default/custom port configs validated. Removed fixed database container name, added executable walkthrough, completed HLD/PDF/SVG with benchmark limits. A feature audit additionally added a passing booking-window/exact-departure regression. |
+| 2026-10-20 | 31-35: LLD, schema/ER, README, submission boundary, final acceptance | Audit 8: all 44 todos complete. Fresh working-tree snapshot excluded `.git`, `target` and ignored files; `clean verify` passed 21 unit/architecture plus 49 PostgreSQL/HTTP cases, zero failures/errors/skips. Persisted files matched the passing snapshot. This is not a claim that uncommitted changes exist in a clean Git clone. Restored schema contains seven tables and the partial active-seat index; real OpenAPI exposes exactly five operations. Public walkthrough verifies all four search/six booking fields and full A320 labels. Final 500-schedule/600k-allocation run: HTTP p95 5.604 ms sequential / 6.862 ms at eight workers; one SQL, no entity hydration, SQL execution 1.146 ms. Clause-level FR1-FR9/nonfunctional/deliverable/clarification mapping is in `spec.md`. Only disposable acceptance containers/volume/image were removed. |
+
+The source brief and historical plan were moved from `notes/` to this directory during
+implementation. The authoritative requirement body is unchanged; an IDE-adjusted wrapper
+link changes the full-file checksum. The original indexed brief SHA-256 was
+`3f198d5b6df4fa535aab06b2bea9d73e73eb1d441028cc520d1359d96e11ef4a`.
+The user explicitly declined untracking these two local sources. They remain tracked;
+no history rewriting, publication, repository visibility change or commit is implied.
+
+## Review remediation
+
+The independent review reproduced four issues: writes committed before an incompatible
+response returned 406; 24:00 clocks normalized to midnight; an ambient booking
+transaction broke rollback-before-conflict-read; and holding the shared connection pool
+delayed a real search to 1278.468 ms. These are implementation findings, not new brief
+requirements. The user approved the fixes and dedicated short-budget read capacity.
+
+| Gate | Changes and evidence |
+|---|---|
+| Audit 9: remediation 01-05 | Added JSON preflight negotiation, strict clocks, narrow service interfaces, immutable application commands/results and an explicit no-ambient-booking contract. The initial strict repository-port variant passed 26 unit/architecture plus 52 integration cases. The user then selected conventional flat Spring Data repositories instead of JPA adapters; a clean follow-up passed 27 unit/architecture plus 52 integration cases. Public service contracts remain entity/transport-independent; implementations intentionally know JPA. No repository constructs API response DTOs. |
+| Audit 10: remediation 06-10 | Implemented approved read/write isolation with configurable 250 ms acquisition/500 ms SQL/250 ms lock read limits and unchanged write waits. Full verification passed 29 unit/architecture plus 57 PostgreSQL/HTTP cases, zero failures/errors/skips. Focused follow-ups proved the same PostgreSQL backend is reusable after timeout rollback and guarded final flat-repository contracts. Fixed Hibernate-wrapped shutdown 57P01 returning 500 using Spring SQL translation; unknown ORM errors remain 500. Mixed 25:1 load: all 816 disjoint bookings succeeded, zero duplicate active seats, 64 hot-seat contenders produced one 201/63x409. At 192 clients, search p95 was 97.745 ms with one explicitly counted overload 503 among 14,400 searches; short local samples are not production capacity certification. A fresh isolated image/Compose run passed readiness, exactly five OpenAPI operations and the HTTP lifecycle walkthrough. Reconciled architecture docs, regenerated PDF/SVG, checked links/formatting/source conventions and unchanged brief checksum. Removed only this gate's disposable containers/volume/image and empty adapter directories. No commit or publication performed. |
+
+## Historical execution
+
 | Timestamp | Skill | Action | Key Decision | Outcome |
 |---|---|---|---|---|
 | 2026-10-10 23:13 | spec-writer | Created `features/ATS-1/` | Greenfield — `code-explorer` skipped (no code to explore) | Steps 0,2,3,5 done |

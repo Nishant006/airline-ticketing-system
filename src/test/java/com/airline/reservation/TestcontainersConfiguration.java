@@ -17,11 +17,11 @@ import org.testcontainers.utility.DockerImageName;
 @TestConfiguration(proxyBeanMethods = false)
 public class TestcontainersConfiguration {
 
-  static final DockerImageName POSTGRES_IMAGE = DockerImageName.parse("postgres:16-alpine");
+    static final DockerImageName POSTGRES_IMAGE = DockerImageName.parse("postgres:16-alpine");
 
-  @Bean
-  @ServiceConnection
-  PostgreSQLContainer postgresContainer() {
-    return new PostgreSQLContainer(POSTGRES_IMAGE).withReuse(true);
-  }
+    @Bean
+    @ServiceConnection
+    PostgreSQLContainer postgresContainer() {
+        return new PostgreSQLContainer(POSTGRES_IMAGE);
+    }
 }

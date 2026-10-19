@@ -1,66 +1,20 @@
-# ---------------------------------------------------------------------------
-# One-command reviewer experience:
-#
-#     docker compose up --build
-#
-# Brings up PostgreSQL 16 and the application. Flyway runs the migrations in
-# db/migrations on application startup, including the reference-data seed, so
-# the API is usable immediately with no manual database steps.
-#
-# Host ports are overridable. 8080 and 5432 are among the most commonly occupied
-# ports on a developer machine -- a local Spring Boot app or a Homebrew Postgres
-# will already hold them -- and a hardcoded mapping turns that into a hard failure
-# on the reviewer's first command. If either is taken:
-#
-#     APP_PORT=18080 POSTGRES_PORT=15432 docker compose up --build
-#
-# Only the host side moves; container-internal ports and service-to-service
-# addressing are unchanged, so nothing else needs reconfiguring.
-#
-# MULTIPLE INSTANCES
-#
-# The design assumes N >= 2 stateless instances behind a load balancer (spec
-# §2.0.4, rules D1-D10). This file brings up ONE by default, which is what the
-# NFR envelope asks for -- but it must be *able* to bring up more, or none of
-# the distributed claims are checkable:
-#
-#     docker compose up --build --scale app=3
-#
-# Two things make that work, and both are easy to lose:
-#   - the app service declares no container_name (names must be unique)
-#   - the app publishes a host port RANGE, so each replica takes the next free
-#     one (8080, 8081, 8082) instead of all three fighting over 8080
-#
-# There is no load balancer here on purpose: adding nginx would make the
-# one-command reviewer path heavier to serve a case the envelope does not ask
-# for. The instances are interchangeable (D10), so addressing any one of them
-# directly is a faithful test -- including running concurrent bookings against
-# two different ports to prove the invariant holds across JVMs and not merely
-# across threads.
-# ---------------------------------------------------------------------------
-
+# One instance: docker compose up --build
+# Optional replicas: docker compose up --build --scale app=3
+# Override both ends of the host range together:
+# APP_PORT=18080 APP_PORT_MAX=18082 POSTGRES_PORT=15432 docker compose up --build
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: airline-postgres
     environment:
       POSTGRES_DB: airline
       POSTGRES_USER: airline
       POSTGRES_PASSWORD: airline
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
-    # max_connections is PINNED, not inherited. Spec §7.5.1 sizes Hikari's pool
-    # from this number (N x maximumPoolSize must stay inside it), so leaving it
-    # to the image default would make that arithmetic depend on the environment
-    # it was supposed to be independent of. 100 is also the PostgreSQL default,
-    # so this changes no behaviour -- it only makes the assumption explicit and
-    # stops a future image bump from silently invalidating the budget.
     command: ["postgres", "-c", "max_connections=100"]
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      # The app must not start until Postgres can actually accept queries;
-      # the container being "running" is not the same as being ready.
       test: ["CMD-SHELL", "pg_isready -U airline -d airline"]
       interval: 5s
       timeout: 3s
@@ -71,8 +25,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    # No container_name: Docker requires unique names, so setting one here caps
-    # the deployment at a single replica and makes --scale fail outright.
     depends_on:
       postgres:
         condition: service_healthy
@@ -81,21 +33,12 @@ services:
       SPRING_DATASOURCE_USERNAME: airline
       SPRING_DATASOURCE_PASSWORD: airline
     ports:
-      # A host port RANGE, not a single port. One instance binds 8080; --scale
-      # app=3 gives 8080/8081/8082. A fixed mapping would make the second
-      # replica fail to start.
       - "${APP_PORT:-8080}-${APP_PORT_MAX:-8082}:8080"
     healthcheck:
-      # READINESS, not plain health. depends_on/service_healthy is asking the
-      # routing question ("can this instance serve traffic?"), which is exactly
-      # what readiness answers. Liveness would answer a different question --
-      # "should this process be killed?" -- and an instance can be alive but
-      # not ready. See spec §5.
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health/readiness | grep -q UP"]
       interval: 10s
       timeout: 3s
       retries: 12
       start_period: 40s
-
 volumes:
   postgres-data:

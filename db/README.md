@@ -1,36 +1,37 @@
 # Database
 
-Flyway owns the schema. Hibernate is configured with `ddl-auto: validate`, so the
-application refuses to start if the entity mapping and the migrated schema disagree.
+PostgreSQL 16 is the production and integration-test engine. Flyway alone creates and
+versions the schema. Spring Data JPA handles application persistence; Hibernate validates
+the existing schema with `ddl-auto=validate`, never creates or updates it. Native SQL is
+limited to the PostgreSQL instance upsert. JDBC is used in test fixtures to check the
+database independently of ORM mappings.
 
-| Path | Role |
+`migrations/` is the executable source of truth. Maven packages this directory as
+`classpath:db/migration`, so the same migrations work in a checkout, executable jar,
+Docker image and Testcontainers tests.
+
+| Migration | Contents |
 |---|---|
-| `migrations/` | **Source of truth.** Versioned Flyway migrations, applied automatically on startup. |
-| `schema.sql` | Generated, human-readable snapshot of the final schema (`pg_dump --schema-only`). Reference only — never executed by the application. |
-| `er-diagram.md` | Entity-relationship diagram. |
+| `V1__baseline_schema.sql` | Seven domain tables, PK/FK/check/unique constraints, active-seat partial unique index and query indexes |
+| `V2__seed_reference_data.sql` | Four airports and three fixed aircraft configurations; no precreated schedules/bookings |
 
-## Why `migrations/` and not `src/main/resources/db/migration`
+Create a schedule through the administrative API before searching. Airport and aircraft
+CRUD are intentionally absent. Applied migrations are immutable; evolve them with new
+versioned scripts. Multiple startup instances rely on Flyway's database migration lock.
 
-The assignment brief mandates a top-level `db/migrations/` directory, while Flyway
-scans `classpath:db/migration` by convention. Rather than keeping two copies of the
-same SQL, `pom.xml` declares `db/migrations` as an additional Maven resource
-directory mapped to `db/migration` on the classpath:
+`schema.sql` is a generated schema-only snapshot for reading, not a second initialization
+mechanism. The ER diagram documents actual relationships. Do not duplicate migrations
+under `src/main/resources`.
 
-```xml
-<resource>
-  <directory>db/migrations</directory>
-  <targetPath>db/migration</targetPath>
-</resource>
+Regenerate the snapshot from a freshly migrated Compose database:
+
+```bash
+docker compose exec -T postgres pg_dump -U airline -d airline \
+  --schema-only --no-owner --no-privileges \
+  --exclude-table=flyway_schema_history > db/schema.sql
 ```
 
-One source of truth, the layout the brief asks for, and it still works inside the
-Docker image.
-
-## Migration naming
-
-```
-V<version>__<snake_case_description>.sql
-```
-
-Migrations are **immutable once committed**. A mistake is corrected by a new
-migration, never by editing an applied one.
+The PostgreSQL 16.15 dump contains psql `\restrict`/`\unrestrict` directives; restore
+using a compatible psql client, not a JDBC SQL-script runner. The snapshot excludes
+seed data and was restored successfully into an empty PostgreSQL database. Do not
+restore it over a database already initialized by Flyway.
