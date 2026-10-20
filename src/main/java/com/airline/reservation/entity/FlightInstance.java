@@ -9,25 +9,24 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import java.time.LocalDate;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-
-import java.time.LocalDate;
 
 @Entity
 @Table(name = "flight_instance")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class FlightInstance {
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+  @Id
+  @GeneratedValue(strategy = GenerationType.IDENTITY)
+  private Long id;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "schedule_id")
-    private FlightSchedule schedule;
+  @ManyToOne(fetch = FetchType.LAZY, optional = false)
+  @JoinColumn(name = "schedule_id")
+  private FlightSchedule schedule;
 
-    @Column(name = "flight_date", nullable = false)
-    private LocalDate flightDate;
+  @Column(name = "flight_date", nullable = false)
+  private LocalDate flightDate;
 }

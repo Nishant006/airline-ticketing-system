@@ -6,5 +6,5 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 
 public interface BookingService {
-    BookingResult create(@NotNull @Valid CreateBookingCommand command);
+  BookingResult create(@NotNull @Valid CreateBookingCommand command);
 }

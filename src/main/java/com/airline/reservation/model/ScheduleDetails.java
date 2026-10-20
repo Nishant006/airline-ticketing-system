@@ -5,14 +5,14 @@ import java.time.LocalTime;
 import java.util.List;
 
 public record ScheduleDetails(
-        String flightNumber,
-        String originCode,
-        String destinationCode,
-        LocalTime departureTime,
-        LocalTime arrivalTime,
-        String aircraftId,
-        List<DayOfWeek> daysOfOperation) {
-    public ScheduleDetails {
-        daysOfOperation = List.copyOf(daysOfOperation);
-    }
+    String flightNumber,
+    String originCode,
+    String destinationCode,
+    LocalTime departureTime,
+    LocalTime arrivalTime,
+    String aircraftId,
+    List<DayOfWeek> daysOfOperation) {
+  public ScheduleDetails {
+    daysOfOperation = List.copyOf(daysOfOperation);
+  }
 }

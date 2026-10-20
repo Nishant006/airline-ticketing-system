@@ -239,6 +239,8 @@ Unexpected failures return sanitized 500 errors.
 `X-Correlation-ID` is echoed/generated for every request. If supplied, it must be
 one 1-64 character value using letters, digits, `.`, `_` or `-`; otherwise 400.
 Logs carry instance/correlation identifiers, not names, bodies or SQL parameters.
+Database and unexpected failures also log safe root-cause types, validated SQLSTATE/
+constraint identifiers and an application source location, without raw exception messages.
 
 ## Design decisions
 

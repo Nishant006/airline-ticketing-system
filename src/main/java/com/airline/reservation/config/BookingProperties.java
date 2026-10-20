@@ -7,5 +7,4 @@ import org.springframework.validation.annotation.Validated;
 
 @Validated
 @ConfigurationProperties("airline.booking")
-public record BookingProperties(@Min(365) @Max(365) int windowDays) {
-}
+public record BookingProperties(@Min(365) @Max(365) int windowDays) {}

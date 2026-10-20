@@ -7,8 +7,7 @@ import org.springframework.validation.annotation.Validated;
 @Validated
 @ConfigurationProperties("airline.datasource.read")
 public record ReadDataSourceProperties(
-        @Min(1) int maximumPoolSize,
-        @Min(250) long connectionTimeoutMs,
-        @Min(1) int statementTimeoutMs,
-        @Min(1) int lockTimeoutMs) {
-}
+    @Min(1) int maximumPoolSize,
+    @Min(250) long connectionTimeoutMs,
+    @Min(1) int statementTimeoutMs,
+    @Min(1) int lockTimeoutMs) {}

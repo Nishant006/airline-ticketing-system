@@ -37,6 +37,23 @@ requirements. The user approved the fixes and dedicated short-budget read capaci
 | Audit 9: remediation 01-05 | Added JSON preflight negotiation, strict clocks, narrow service interfaces, immutable application commands/results and an explicit no-ambient-booking contract. The initial strict repository-port variant passed 26 unit/architecture plus 52 integration cases. The user then selected conventional flat Spring Data repositories instead of JPA adapters; a clean follow-up passed 27 unit/architecture plus 52 integration cases. Public service contracts remain entity/transport-independent; implementations intentionally know JPA. No repository constructs API response DTOs. |
 | Audit 10: remediation 06-10 | Implemented approved read/write isolation with configurable 250 ms acquisition/500 ms SQL/250 ms lock read limits and unchanged write waits. Full verification passed 29 unit/architecture plus 57 PostgreSQL/HTTP cases, zero failures/errors/skips. Focused follow-ups proved the same PostgreSQL backend is reusable after timeout rollback and guarded final flat-repository contracts. Fixed Hibernate-wrapped shutdown 57P01 returning 500 using Spring SQL translation; unknown ORM errors remain 500. Mixed 25:1 load: all 816 disjoint bookings succeeded, zero duplicate active seats, 64 hot-seat contenders produced one 201/63x409. At 192 clients, search p95 was 97.745 ms with one explicitly counted overload 503 among 14,400 searches; short local samples are not production capacity certification. A fresh isolated image/Compose run passed readiness, exactly five OpenAPI operations and the HTTP lifecycle walkthrough. Reconciled architecture docs, regenerated PDF/SVG, checked links/formatting/source conventions and unchanged brief checksum. Removed only this gate's disposable containers/volume/image and empty adapter directories. No commit or publication performed. |
 
+## Scoped audit corrections
+
+The user authorized only source-convention/formatting corrections and safe failure
+diagnostics. Performance-acceptance changes remain deferred. Read-only inspection
+confirmed that committed `main` (`fec8828`) has flat Spring Data repositories; the
+11 obsolete staged additions were left untouched, as requested.
+
+| Gate | Changes and evidence |
+|---|---|
+| Audit 11: approved source and diagnostic fixes | Replaced three wildcard imports and applied the existing Google formatter to all 87 Java files without changing its configuration. Failure logs now retain exception/root types, validated SQLSTATE/constraint identifiers and application locations without raw messages, SQL or request values. Seven handler tests cover sanitization, metadata validation, unchanged 500/503 behavior and cyclic causes; an existing PostgreSQL booking test additionally proves diagnostic usefulness and passenger privacy through HTTP. Final Java 21 `spotless:apply clean verify` passed 32 unit/architecture plus 57 integration cases, with zero failures/errors/skips. Java syntax-tree comparison against HEAD confirmed that all 82 files outside the five intentionally edited Java files are formatting-only, including both performance tests. The brief checksum, staging fingerprint and HEAD remained unchanged. No staging, commit or push performed. |
+
+An initial full run could not load the nested diagnostic helper. Generated classes
+and both packaged JAR variants contained it. Isolated HTTP verification and the
+subsequent clean full run passed without changing the helper code. The initial
+class-loading failure's cause remains unconfirmed; the failed and passing logs are
+retained in the session artifacts.
+
 ## Historical execution
 
 | Timestamp | Skill | Action | Key Decision | Outcome |

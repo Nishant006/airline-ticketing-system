@@ -20,38 +20,38 @@ import lombok.NoArgsConstructor;
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class BookingSeat {
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+  @Id
+  @GeneratedValue(strategy = GenerationType.IDENTITY)
+  private Long id;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "booking_id")
-    private Booking booking;
+  @ManyToOne(fetch = FetchType.LAZY, optional = false)
+  @JoinColumn(name = "booking_id")
+  private Booking booking;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "flight_instance_id")
-    private FlightInstance flightInstance;
+  @ManyToOne(fetch = FetchType.LAZY, optional = false)
+  @JoinColumn(name = "flight_instance_id")
+  private FlightInstance flightInstance;
 
-    @Column(name = "seat_label", nullable = false, length = 3)
-    private String seatLabel;
+  @Column(name = "seat_label", nullable = false, length = 3)
+  private String seatLabel;
 
-    @Column(name = "passenger_name", nullable = false, columnDefinition = "text")
-    private String passengerName;
+  @Column(name = "passenger_name", nullable = false, columnDefinition = "text")
+  private String passengerName;
 
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 8)
-    private Status status;
+  @Enumerated(EnumType.STRING)
+  @Column(nullable = false, length = 8)
+  private Status status;
 
-    public BookingSeat(Booking booking, String seatLabel, String passengerName) {
-        this.booking = booking;
-        this.flightInstance = booking.getFlightInstance();
-        this.seatLabel = seatLabel;
-        this.passengerName = passengerName;
-        this.status = Status.BOOKED;
-    }
+  public BookingSeat(Booking booking, String seatLabel, String passengerName) {
+    this.booking = booking;
+    this.flightInstance = booking.getFlightInstance();
+    this.seatLabel = seatLabel;
+    this.passengerName = passengerName;
+    this.status = Status.BOOKED;
+  }
 
-    public enum Status {
-        BOOKED,
-        RELEASED
-    }
+  public enum Status {
+    BOOKED,
+    RELEASED
+  }
 }

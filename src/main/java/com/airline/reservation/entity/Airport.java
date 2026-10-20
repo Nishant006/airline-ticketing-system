@@ -15,17 +15,17 @@ import org.hibernate.type.SqlTypes;
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Airport {
-    @Id
-    @Column(name = "iata_code", length = 3)
-    @JdbcTypeCode(SqlTypes.CHAR)
-    private String code;
+  @Id
+  @Column(name = "iata_code", length = 3)
+  @JdbcTypeCode(SqlTypes.CHAR)
+  private String code;
 
-    @Column(nullable = false, length = 120)
-    private String name;
+  @Column(nullable = false, length = 120)
+  private String name;
 
-    @Column(nullable = false, length = 80)
-    private String city;
+  @Column(nullable = false, length = 80)
+  private String city;
 
-    @Column(nullable = false, length = 80)
-    private String country;
+  @Column(nullable = false, length = 80)
+  private String country;
 }

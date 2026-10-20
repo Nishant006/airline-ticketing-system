@@ -16,18 +16,18 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping(
-        value = "/api/v1/admin/flight-schedules",
-        produces = MediaType.APPLICATION_JSON_VALUE)
+    value = "/api/v1/admin/flight-schedules",
+    produces = MediaType.APPLICATION_JSON_VALUE)
 @RequiredArgsConstructor
 @Slf4j
 public class ScheduleController {
-    private final ScheduleService scheduleService;
+  private final ScheduleService scheduleService;
 
-    @PostMapping
-    @ResponseStatus(HttpStatus.CREATED)
-    public ScheduleResponse create(@Valid @RequestBody CreateScheduleRequest request) {
-        ScheduleResponse created = ScheduleResponse.from(scheduleService.create(request.toCommand()));
-        log.info("schedule_created flight={}", created.flightNumber());
-        return created;
-    }
+  @PostMapping
+  @ResponseStatus(HttpStatus.CREATED)
+  public ScheduleResponse create(@Valid @RequestBody CreateScheduleRequest request) {
+    ScheduleResponse created = ScheduleResponse.from(scheduleService.create(request.toCommand()));
+    log.info("schedule_created flight={}", created.flightNumber());
+    return created;
+  }
 }

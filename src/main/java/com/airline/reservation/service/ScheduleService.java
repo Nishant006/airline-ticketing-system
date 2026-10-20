@@ -6,5 +6,5 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 
 public interface ScheduleService {
-    ScheduleDetails create(@NotNull @Valid CreateScheduleCommand command);
+  ScheduleDetails create(@NotNull @Valid CreateScheduleCommand command);
 }

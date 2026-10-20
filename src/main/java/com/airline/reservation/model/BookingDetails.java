@@ -5,10 +5,9 @@ import java.time.LocalTime;
 import java.util.UUID;
 
 public record BookingDetails(
-        long id,
-        UUID reference,
-        String flightNumber,
-        LocalDate flightDate,
-        LocalTime departureTime,
-        BookingStatus status) {
-}
+    long id,
+    UUID reference,
+    String flightNumber,
+    LocalDate flightDate,
+    LocalTime departureTime,
+    BookingStatus status) {}

@@ -5,5 +5,5 @@ import com.airline.reservation.model.CreateBookingCommand;
 import com.airline.reservation.model.OperatingFlight;
 
 public interface BookingTransactionService {
-    BookingResult create(OperatingFlight flight, long instanceId, CreateBookingCommand command);
+  BookingResult create(OperatingFlight flight, long instanceId, CreateBookingCommand command);
 }

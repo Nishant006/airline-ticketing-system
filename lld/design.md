@@ -112,7 +112,11 @@ ID and the existing handler's 400 problem response. MDC includes a bounded insta
 identifier and is cleared in `finally`; the response always echoes the correlation ID.
 Debug request logs include method, status and elapsed time, not URLs/bodies/names.
 ORM JDBC exception logging is suppressed because constraint messages can embed
-passenger values; application handlers retain explicit class/code-only failure logs.
+passenger values. Database and unexpected-failure logs retain exception/root-cause
+types, validated SQLSTATE/constraint identifiers and the deepest available application
+source location. Missing or malformed database metadata is shown as `-`. Raw exception
+messages, SQL text and request values are never passed to the logger; diagnostic fields
+are not added to API responses. Cause traversal detects cycles.
 
 Only the active-seat constraint becomes `SEAT_UNAVAILABLE`; unrelated integrity failures
 must not be disguised as seat conflicts. Conflict enrichment runs after rollback and
