@@ -75,6 +75,7 @@ class SearchPerformanceIT extends IntegrationSupport {
                             15,000 instances, 30,000 bookings, 300,000 active and 300,000 released seats.
                             Synthetic volume is an explicit measurement assumption, not an interviewer requirement.
                             Load: local HTTP, one application, 10 warmups; 100 sequential then 200 at 8 workers.
+                            Acceptance: every measured search returns 200 in under one second; percentiles are diagnostic.
                             OS: %s %s; Java %s; processors visible: %d
                             Sequential HTTP milliseconds: p50=%.3f p95=%.3f max=%.3f
                             Eight-worker HTTP milliseconds: p50=%.3f p95=%.3f max=%.3f
@@ -98,8 +99,10 @@ class SearchPerformanceIT extends IntegrationSupport {
                   plan);
       Files.writeString(Path.of("target/search-performance.txt"), evidence);
       System.out.println(evidence);
-      assertThat(millis(elapsed.get(94))).isLessThan(1000);
-      assertThat(millis(concurrentElapsed.get(189))).isLessThan(1000);
+      assertThat(millis(elapsed.getLast())).as("Slowest sequential search").isLessThan(1000);
+      assertThat(millis(concurrentElapsed.getLast()))
+          .as("Slowest eight-worker search")
+          .isLessThan(1000);
     }
   }
 

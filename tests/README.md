@@ -22,8 +22,23 @@ daemon, while `./mvnw verify` runs everything including the concurrency evidence
 
 `SearchPerformanceIT` and `MixedLoadIT` share one 500-schedule/600,000-allocation
 fixture and write `target/search-performance.txt` and `target/mixed-load.txt`.
-The latter uses exact 25:1 traffic and reports overload 503 separately from success;
-short local closed-loop phases are not production capacity certification.
+`SearchPerformanceIT` requires all 100 sequential and 200 eight-worker measured
+searches to return 200 in under one second; p50/p95 remain diagnostics, not substitutes
+for the slowest-response check.
+
+`MixedLoadIT` uses exact 25:1 traffic. Its existing 16-client phase is the local
+engineering baseline: every search must return 200 in under one second. The 64/192-client
+phases are exploratory stress, allowing explicit 503 overload responses but not an
+all-shed phase. `searchAll` includes all search responses; `search200` includes only
+successful results, so fast overload rejections cannot hide successful-search latency.
+All disjoint bookings must return 201 in every phase; the hot-seat race still requires
+one winner and no duplicate active allocations.
+
+The user accepted a stateless backend and delegated scaling judgment without a fixed
+peak request rate. These short warm-cache, local closed-loop checks are not an agreed
+peak-RPS SLA, a sustained production capacity certification or a cold-cache guarantee.
+Production autoscaling infrastructure is not supplied by these tests.
+
 `ReadIsolationIT` exhausts the physical read/write pools and exercises PostgreSQL
 SQL/lock cancellation, independent booking capacity and connection recovery.
 

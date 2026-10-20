@@ -29,6 +29,9 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class MixedLoadIT extends IntegrationSupport {
+  private static final int BASELINE_CLIENTS = 16;
+  private static final long SEARCH_TARGET_NANOS = Duration.ofSeconds(1).toNanos();
+
   @LocalServerPort private int port;
 
   @Autowired
@@ -44,8 +47,12 @@ class MixedLoadIT extends IntegrationSupport {
     PerformanceDataset.seed(jdbc, TOMORROW);
     List<String> report = new ArrayList<>();
     report.add("500 schedules, 100 route matches, 30 dates, 600,000 synthetic allocations.");
-    report.add("Local PostgreSQL Docker; one app/client JVM; JaCoCo; closed loop, no think time.");
+    report.add("Local PostgreSQL Docker; one app/client JVM; closed loop, no think time.");
     report.add("25 searches then one disjoint single-seat booking; 3 cycles/client; warm cache.");
+    report.add(
+        "Baseline: "
+            + BASELINE_CLIENTS
+            + " clients, every search 200 and under one second. Stress: 64/192 clients, overload reported separately.");
     report.add(
         "Read/write pool maxima: "
             + readPool.getMaximumPoolSize()
@@ -58,7 +65,7 @@ class MixedLoadIT extends IntegrationSupport {
       for (int index = 0; index < 20; index++) {
         assertThat(search(client, TOMORROW).status()).isEqualTo(200);
       }
-      for (int clients : List.of(16, 64, 192)) {
+      for (int clients : List.of(BASELINE_CLIENTS, 64, 192)) {
         report.add(measurePhase(client, clients, targets));
       }
       report.add(hotSeat(client));
@@ -135,24 +142,33 @@ class MixedLoadIT extends IntegrationSupport {
     double seconds = (System.nanoTime() - began) / 1_000_000_000.0;
     assertThat(searches).allMatch(reply -> reply.status() == 200 || reply.status() == 503);
     assertThat(bookings).allMatch(reply -> reply.status() == 201);
+    List<Reply> successfulSearches =
+        searches.stream().filter(reply -> reply.status() == 200).toList();
+    assertThat(successfulSearches).as("Successful searches at %s clients", clients).isNotEmpty();
     long unavailable = searches.stream().filter(reply -> reply.status() == 503).count();
-    if (clients == 16) {
-      assertThat(unavailable).isZero();
+    if (clients == BASELINE_CLIENTS) {
+      assertThat(unavailable).as("Baseline overload responses").isZero();
+      assertThat(searches)
+          .as("Every baseline search must finish in under one second")
+          .allMatch(reply -> reply.nanos() < SEARCH_TARGET_NANOS);
     }
     return String.format(
         Locale.ROOT,
-        "clients=%d searches=%d [200=%d/503=%d] bookings=%d [all201] elapsed=%.3fs attemptedRps=%.1f "
-            + "search[p50/p95/p99/max]=%s booking[p50/p95/p99/max]=%s searchOver1s=%d",
+        "mode=%s clients=%d searches=%d [200=%d/503=%d] bookings=%d [all201] elapsed=%.3fs attemptedRps=%.1f "
+            + "searchAll[p50/p95/p99/max]=%s search200[p50/p95/p99/max]=%s "
+            + "booking[p50/p95/p99/max]=%s searchOver1s=%d",
+        clients == BASELINE_CLIENTS ? "baseline" : "stress",
         clients,
         searches.size(),
-        searches.size() - unavailable,
+        successfulSearches.size(),
         unavailable,
         bookings.size(),
         seconds,
         (searches.size() + bookings.size()) / seconds,
         percentiles(searches),
+        percentiles(successfulSearches),
         percentiles(bookings),
-        searches.stream().filter(reply -> reply.nanos() >= 1_000_000_000L).count());
+        searches.stream().filter(reply -> reply.nanos() >= SEARCH_TARGET_NANOS).count());
   }
 
   private String hotSeat(HttpClient client) throws Exception {

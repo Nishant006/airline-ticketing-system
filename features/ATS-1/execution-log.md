@@ -40,7 +40,7 @@ requirements. The user approved the fixes and dedicated short-budget read capaci
 ## Scoped audit corrections
 
 The user authorized only source-convention/formatting corrections and safe failure
-diagnostics. Performance-acceptance changes remain deferred. Read-only inspection
+diagnostics. Performance-acceptance changes were deferred for that gate. Read-only inspection
 confirmed that committed `main` (`fec8828`) has flat Spring Data repositories; the
 11 obsolete staged additions were left untouched, as requested.
 
@@ -53,6 +53,24 @@ and both packaged JAR variants contained it. Isolated HTTP verification and the
 subsequent clean full run passed without changing the helper code. The initial
 class-loading failure's cause remains unconfirmed; the failed and passing logs are
 retained in the session artifacts.
+
+## Accepted stateless scaling clarification
+
+On 2026-10-20 the user accepted a stateless backend, delegated engineering judgment
+and said a fixed peak request-rate requirement is unnecessary for the assignment.
+This supersedes the earlier performance-acceptance deferral, not the restrictions on
+Git staging/history. Keep one horizontally replicable application and shared PostgreSQL;
+production load-balancer/autoscaler provisioning is not claimed to be implemented.
+
+| Gate | Changes and evidence |
+|---|---|
+| Audit 12: five clarified scaling tasks | Recorded the accepted deployment scope, replaced p95-only search gates with slowest-response checks, required all 16-client baseline searches to return 200 under one second, separated successful/stress response evidence and documented readiness-aware scaling with a database connection budget including rollout surge. All selected cases passed across targeted/isolated Java 21 lifecycle runs: one source-convention and seven integration cases covering search latency, mixed traffic, independent contexts and read/write isolation. Spotless passes. Measured warm read-only maxima were 5.298 ms sequential/14.784 ms at eight workers; mixed-baseline maximum was 36.581 ms. The successful mixed run returned 200 for all 20,400 searches, committed all 816 disjoint bookings and retained one winner/63 conflicts in the hot-seat race, with no duplicate ownership. No application, schema, dependency or container configuration changed. The authoritative brief, HEAD `55ee30e` and staging fingerprint remained unchanged; no commit or push. |
+
+The first combined run failed on a search TCP connection reset in the 192-client
+stress phase; unchanged mixed-load verification subsequently passed in isolation.
+No automatic retry or relaxed assertion was added. The reset's cause is unconfirmed
+and the failed log is retained. These short local results are not a sustained capacity
+certificate or a guarantee that on-demand replicas remove database/network limits.
 
 ## Historical execution
 

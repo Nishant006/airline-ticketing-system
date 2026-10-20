@@ -9,6 +9,9 @@ Design corrected on 2026-10-19; clause audit on 2026-10-20.
 clarifications, is authoritative and must not be edited. This document records design
 choices, not additional hiring requirements. It replaces the contradictory earlier draft.
 The 2026-10-19 user decisions below supersede earlier execution-log entries.
+On 2026-10-20 the user additionally accepted a stateless backend, delegated scaling
+judgment and confirmed that a fixed peak request rate is unnecessary for this assignment.
+This clarification does not add a peak-RPS guarantee or a production autoscaler.
 
 Implement the nine functional requirements as vertical slices. Each slice includes its
 domain rules, persistence, API where required, tests, and related documentation. Audit
@@ -61,6 +64,10 @@ algorithm points, all four cancellation algorithm points, and assumptions.
 One stateless Java 21 / Spring Boot service and one PostgreSQL primary. The reviewer
 runs one instance; correctness must also hold with multiple instances sharing the
 database. No process-local lock or mutable inventory cache participates in correctness.
+Scale on demand by adding identical replicas behind a readiness-aware load balancer,
+without sticky sessions. Size maximum simultaneous replicas, including rollout surge,
+against the shared database connection budget. Compose provides manual replica scaling;
+production load balancing and autoscaler provisioning remain deployment concerns.
 
 Use the user's latest package-by-layer decision: root-level `controller`, `service`,
 `service.impl`, `repository`, `entity`, `model`, `dto.request`, `dto.response`, `config`, `exception` and
@@ -204,6 +211,12 @@ a conflict if it precedes release. Neither outcome may corrupt or partially sell
 - Measure search HTTP latency with 500 schedules and a documented dataset.
   Query-count and EXPLAIN evidence support that measurement; do not force a particular
   index scan or forbid legitimate sequential scans on small tables.
+- Under the user's delegated judgment, all measured warm read-only searches and all
+  searches in the existing 16-client mixed phase must return 200 in under one second.
+  This local engineering baseline is not an agreed peak load or a percentile SLO.
+  The 64/192-client phases are exploratory stress: count 503 separately, report
+  successful-search latency separately and reject an all-shed phase. All disjoint
+  bookings must still succeed and no phase may produce duplicate seat ownership.
 - 10k DAU and 25:1 traffic do not determine QPS without additional assumptions.
   Do not label assumed QPS as measured or guaranteed.
 - Seat-map work includes output size; booking/cancellation involve multiple SQL round

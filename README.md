@@ -96,10 +96,27 @@ docker compose ps
 ```
 
 Each JVM gets a port from 8080-8082; no load balancer is needed for the review.
+Increase `APP_PORT_MAX` before starting more than three local replicas.
 The default is one replica. Pool limits must be budgeted across all replicas:
 each JVM permits 10 write plus 5 read connections (15 total, 45 for three replicas),
 and this local PostgreSQL permits 100 total.
 That arithmetic leaves headroom; it is not a throughput guarantee.
+
+For on-demand deployment, add identical instances behind a readiness-aware load
+balancer; no sticky sessions or transfer of JVM-local reservation state is needed.
+Compose demonstrates manual replica scaling, not a shipped load balancer or
+autoscaler. Cloud/orchestrator provisioning is outside this assignment's scope.
+
+Bound scaling by the shared database, including old/new replicas during a rollout:
+
+```text
+max_simultaneous_replicas * (read_pool_max + write_pool_max)
+    + other_connections + operational_reserve <= postgres_max_connections
+```
+
+The user accepted stateless scaling without a fixed peak-RPS requirement. Additional
+app replicas do not eliminate database I/O limits or contention for the same seat;
+scale only within database headroom rather than assuming unlimited capacity.
 
 Stop with `docker compose down`. Only when intentionally discarding local data,
 use `docker compose down -v`. For a named project or custom ports, use the same
@@ -276,6 +293,12 @@ capacity guarantees. Existing indexes
 were used; no speculative cache/index was added. Bounded pagination/lazy loading
 is a future API change only if measured search scale requires it. See the LLD for
 the exact dataset and conditional batching/retention/pool optimizations.
+
+Current automated acceptance checks every measured warm read-only search and every
+search in the 16-client mixed baseline for 200 and latency under one second, not just
+p95. The 64/192-client phases remain exploratory stress; overload 503s are reported
+separately from successful-search latency. These are local engineering choices, not
+an agreed peak-RPS contract. See [test guidance](tests/README.md).
 
 ## Search algorithm
 

@@ -237,12 +237,16 @@ enabled and warm caches. Results from the final remediation run:
 | 64 | 4800 | 192 | 34.228 | 9.918 | 0 | 2.268 |
 | 192 | 14400 | 576 | 97.745 | 4.835 | 1 | 6.120 |
 
-Percentiles include both successful and shed search responses; no response exceeded
-one second. The one 503 is counted, not treated as a successful search. All 816 disjoint
+Search percentiles in this historical table include both successful and shed responses;
+no response exceeded one second. The one 503 is counted, not treated as a successful search. All 816 disjoint
 bookings own their intended seats; 64 same-seat contenders yield one 201/63x409 and
 the database has zero duplicate active allocations. `target/mixed-load.txt` contains
 the report. These short closed-loop phases do not establish sustained/open-loop
 production capacity, a cold-cache guarantee or a DAU-to-QPS conversion.
+
+Current reports separate all-response (`searchAll`) and successful-only (`search200`)
+latencies. The local baseline and exploratory-stress acceptance rules are documented
+in [test guidance](../tests/README.md).
 
 Current query costs: search is one aggregate statement; seat map is two statements
 (schedule/aircraft then active labels), with work proportional to emitted labels.
