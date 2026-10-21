@@ -190,6 +190,13 @@ top-level `tests/` path. That directory holds the [IntelliJ HTTP collection and
 walkthrough](tests/README.md). `*Test` uses Surefire; `*IT` uses Failsafe and Docker.
 Coverage is reported at `target/site/jacoco/index.html`.
 
+For an interview walkthrough, import [`postman/postman.json`](postman/postman.json)
+and [`postman/env.json`](postman/env.json), select **ATS Local**, and run
+**01 Interview demo**. Run the whole collection for the extended E2E checks,
+including concurrent booking/cancellation and a real UTC departure cutoff.
+See [Postman instructions and coverage limits](tests/README.md#postman-interview-and-e2e).
+No backend API key or repository-local Node/Newman setup is required.
+
 Coverage includes schema invariants, rollback injection, concurrent first-instance
 creation, competing/overlapping/disjoint seat sets, cancellation races, rebooking,
 independent application contexts, real database outage, privacy and request errors.

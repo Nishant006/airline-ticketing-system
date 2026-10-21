@@ -72,6 +72,30 @@ No automatic retry or relaxed assertion was added. The reset's cause is unconfir
 and the failed log is retained. These short local results are not a sustained capacity
 certificate or a guarantee that on-demand replicas remove database/network limits.
 
+## Postman interview and E2E delivery
+
+The user authorized publishing only the generated collection and environment into
+their Postman account. Both were created in **My Workspace**, whose visibility was
+verified as **personal**. The management credential was sent only to the HTTPS
+Postman API, never included in repository files, backend requests or reports.
+
+| Gate | Changes and evidence |
+|---|---|
+| Audit 13: five Postman delivery tasks | Reviewed current API/seed contracts, installed pinned Newman 6.2.3 outside the repository, created only `postman/postman.json` and `postman/env.json`, documented use in existing README/test instructions, and executed the collection against a fresh isolated PostgreSQL/application Compose project. Eight ordered folders contain 127 request definitions, including a 16-request interview demo, all three seeded aircraft layouts, strict validation/HTTP errors, pre-write 406 checks, rolling UTC boundaries, sold-out/full-group cancellation, 16 competing bookings/eight competing cancellations, and a bounded real-departure wait. Full Newman run: 214 HTTP requests and 737 assertions, zero failures, 51.915 seconds. Postman API read-back verified all executable request/script content after normalizing server-omitted no-auth/empty-description defaults; the downloaded cloud collection/environment then passed a fresh 16-request/66-assertion demo on the same database. Database inspection found zero future confirmed bookings, zero duplicate active-seat groups, nine cancelled bookings and the one intentionally retained departed confirmed booking. The final audit verifies two JSON-only deliverables, empty initial fixture variables, credential absence, matching local/cloud IDs, unchanged brief/HEAD and unchanged 11 pre-existing staged source entries. Newman setup and CLI/JSON/JUnit evidence remain outside the repository. No backend, schema or repository dependency-manifest changes were made; no manual Git staging/history operations were performed. |
+
+The published collection is **Airline Ticketing System - Interview and E2E**
+(`e83609ef-d127-45f4-9f1e-5e120d61857b`); the environment is **ATS Local**
+(`156f60d3-d736-497a-b356-dcfa83d6d808`), targeting `http://localhost:8080`.
+Polling makes full-run request counts/duration variable. Healthy public HTTP checks
+do not claim internal fault-injection, outage/503, deterministic multi-JVM or
+production-capacity coverage; the Java integration suite remains complementary.
+
+Both new JSON files appeared staged during generation, before their cloud IDs were
+aligned; only those IDs differ between the staged and current working copies.
+The index was left as found rather than restaged without approval. Only the
+disposable `ats-postman-0effb298` containers, network, volume and app image were
+removed after verification; pre-existing services/data were not touched.
+
 ## Historical execution
 
 | Timestamp | Skill | Action | Key Decision | Outcome |
