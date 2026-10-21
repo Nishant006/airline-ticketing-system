@@ -248,7 +248,7 @@ mandatory. Evidence below names actual code/tests, not earlier planning assertio
 |---|---|---|
 | 43-45 | Airports pre-exist; seeding permitted | V2 seeds DXB/LHR/BOM/SIN; `DatabaseSchemaIT.airportsHaveAllRequiredFieldsAndStableIataCodes` reads the real migrated database |
 | 46 | No airport CRUD | Only schedule, flight and booking controllers; OpenAPI exposes no reference-data controller |
-| 48 | Airport IATA code | `Airport.iataCode`, schema PK/format check; seed assertion |
+| 48 | Airport IATA code | `Airport.code`, schema PK/format check; seed assertion |
 | 49 | Airport name | `Airport.name`, nonnull schema and nonblank seed assertion |
 | 50 | Airport city | `Airport.city`, nonnull schema and nonblank seed assertion |
 | 51 | Airport country | `Airport.country`, nonnull schema and nonblank seed assertion |
@@ -318,10 +318,10 @@ mandatory. Evidence below names actual code/tests, not earlier planning assertio
 | 329-335 | Working backend/docs; external black boxes need not be implemented | No authentication/payment integration inserted; deployment gateway boundary disclosed |
 | 346-348 | Multiple-instance design, single reviewer instance | Stateless code and database invariant; two-context automated test plus three separate Compose JVM proof; default one replica |
 | 350-353 | Moderate 10k DAU/500 schedules | 500-schedule measured dataset; DAU is not converted into invented QPS |
-| 355-356, 368-369 | 25:1 search/booking mix | `MixedLoadIT`: 20,400 searches/816 disjoint bookings, 16/64/192 local clients; all bookings 201; one search 503 at 192. Short closed-loop evidence, not production/soak capacity certification |
+| 355-356, 367-368 | 25:1 search/booking mix | `MixedLoadIT`: 20,400 searches/816 disjoint bookings, 16/64/192 local clients; all bookings 201 in passing runs; 64/192-client phases may shed searches as explicit 503s, and the test fails intermittently with a connect-time reset (see [NFR evidence](../../tests/nfr-evidence.md) §5-§8). Short closed-loop evidence, not production/soak capacity certification |
 | 358-361 | Stale read permitted only with booking-state feedback | No server cache; committed read snapshot can still age before click; known conflict returns 409 with fresh conflict details |
-| 363-366 | One-second search; provision for lazy loading if needed; stable bookings prioritized | Read-only and 25:1 real HTTP measurements below one second, with overload 503 counted separately; approved read pool/deadlines protect booking capacity. No pagination needed at measured result size; no hard real-time/production guarantee |
-| 371-374 | Strong booking consistency and zero double booking | Database active-seat constraint, atomic writes, cross-JVM same-seat and cancellation/rebooking evidence |
+| 363-365 | One-second search; provision for lazy loading if needed; stable bookings prioritized | Read-only and 25:1 real HTTP measurements below one second, with overload 503 counted separately; approved read pool/deadlines protect booking capacity. No pagination needed at measured result size; no hard real-time/production guarantee |
+| 370-372 | Strong booking consistency and zero double booking | Database active-seat constraint, atomic writes, cross-JVM same-seat and cancellation/rebooking evidence |
 
 The clause audit found a missing direct write-path boundary assertion, not a missing
 implementation: `BookingIT.bookingUsesTheSame365DateWindowAndExactDepartureBoundary`

@@ -51,6 +51,10 @@ DTOs. Search's JPQL constructor projects `model.FlightAvailability`, never an AP
 Shared `SeatLayout` rules are reused by aircraft entities and immutable operating-flight
 snapshots. Application models have no Spring, Jackson or JPA dependencies. OSIV is disabled.
 IDENTITY-generated seat IDs imply individual ordered inserts, not JDBC batching.
+`reWriteBatchedInserts=true` in the JDBC URL therefore has no effect today; it only
+matters after a move to sequence IDs. Seats are inserted in lexical label order
+(`Comparator.comparing(seat)`, so `10A` precedes `2A`). Deadlock reduction only needs
+a deterministic total order, not a numeric one.
 
 ## API contracts
 
@@ -108,8 +112,8 @@ Framework validation errors expose field names/messages, never rejected values.
 
 `RequestCorrelationFilter` accepts exactly one 1-64 character `X-Correlation-ID`
 using `[A-Za-z0-9._-]`, or generates a UUID. Malformed/repeated headers get a generated
-ID and the existing handler's 400 problem response. MDC includes a bounded instance
-identifier and is cleared in `finally`; the response always echoes the correlation ID.
+ID and the existing handler's 400 problem response. MDC includes a sanitized instance
+identifier (characters outside `[A-Za-z0-9._-]` become `_`; length is not capped) and is cleared in `finally`; the response always echoes the correlation ID.
 Debug request logs include method, status and elapsed time, not URLs/bodies/names.
 ORM JDBC exception logging is suppressed because constraint messages can embed
 passenger values. Database and unexpected-failure logs retain exception/root-cause
@@ -207,20 +211,21 @@ EXPLAIN plan for the clarified latency target.
 
 ## Query audit and measured performance
 
-Measured after review remediation: macOS arm64, Java 21.0.5, 16 visible processors,
-PostgreSQL 16.15 in Docker and one application with separate read-5/write-10 pools. Dataset:
+Environment: macOS arm64, Java 21.0.5, 16 visible processors, PostgreSQL 16.15 in
+Docker and one application with separate read-5/write-10 pools. Dataset:
 500 daily schedules (100 matching the searched route), 30 dates each, 15,000 instances,
 30,000 bookings, 300,000 active and 300,000 released allocations. Allocation volume
 is a disclosed synthetic assumption, not derived from DAU.
 
-After 10 warmups, 100 sequential HTTP searches had p50/p95/max of
-2.267/2.702/3.215 ms. Another 200 HTTP searches at eight workers had
-4.324/7.332/10.835 ms. Each returned all 100 results and executed one statement with
-zero entity hydration. These local warm-cache, read-only measurements are not a
-production/mixed-workload or cold-cache guarantee.
+After 10 warmups, `SearchPerformanceIT` sends 100 sequential HTTP searches and then
+200 at eight workers. In the latest recorded full run (R2, 2026-10-21) p95 was 2.589 ms
+and 6.858 ms. Each returned all 100 results and executed one statement with zero entity
+hydration. These local warm-cache, read-only measurements are not a
+production/mixed-workload or cold-cache guarantee. All runs are in the
+[NFR evidence ledger](../tests/nfr-evidence.md#71-read-only-search-s9-milliseconds-all-responses-200).
 
-`EXPLAIN (ANALYZE, BUFFERS)` of Hibernate's actual emitted query reported 1.106 ms
-execution and used `ix_schedule_route`, `uq_instance`, and `uq_booking_seat_active`.
+`EXPLAIN (ANALYZE, BUFFERS)` of Hibernate's actual emitted query reported about 1.1 ms
+execution (1.252 ms in R2) and used `ix_schedule_route`, `uq_instance`, and `uq_booking_seat_active`.
 A sequential scan of the 3,500-row operating-day table was legitimate. No index hints,
 disabled sequential scans, duplicate index, cache or query rewrite was needed.
 `SearchPerformanceIT` reproduces the dataset and writes SQL, timings and full plan to
@@ -229,20 +234,19 @@ disabled sequential scans, duplicate index, cache or query rewrite was needed.
 `MixedLoadIT` shares `PerformanceDataset` rather than duplicating seed SQL. Each client
 performs three cycles of 25 searches then one disjoint single-seat booking over real HTTP.
 The same JVM hosts the application and client; PostgreSQL runs in Docker, with JaCoCo
-enabled and warm caches. Results from the final remediation run:
-
-| Clients | Searches | Bookings (all 201) | Search p95 ms | Booking p95 ms | Search 503 | Phase seconds |
-|---|---|---|---|---|---|---|
-| 16 | 1200 | 48 | 15.049 | 166.547 | 0 | 0.879 |
-| 64 | 4800 | 192 | 34.228 | 9.918 | 0 | 2.268 |
-| 192 | 14400 | 576 | 97.745 | 4.835 | 1 | 6.120 |
-
-Search percentiles in this historical table include both successful and shed responses;
-no response exceeded one second. The one 503 is counted, not treated as a successful search. All 816 disjoint
+enabled and warm caches. In the latest recorded full run (R2, 2026-10-21), all-response
+search p95 was 12.515/32.393/97.293 ms at 16/64/192 clients; the 192-client phase shed
+2 of 14,400 searches as 503, and no response exceeded one second. Per-run phase tables
+(including successful-only latency, booking latency and phase durations) are in the
+[NFR evidence ledger](../tests/nfr-evidence.md#72-mixed-251-load-s10-milliseconds).
+The test fails intermittently with a connect-time connection reset whose cause is not
+established ([§8](../tests/nfr-evidence.md#8-known-limitation-intermittent-mixedloadit-connection-reset)).
+A 503 is counted, never treated as a successful search. All 816 disjoint
 bookings own their intended seats; 64 same-seat contenders yield one 201/63x409 and
 the database has zero duplicate active allocations. `target/mixed-load.txt` contains
 the report. These short closed-loop phases do not establish sustained/open-loop
-production capacity, a cold-cache guarantee or a DAU-to-QPS conversion.
+production capacity, a cold-cache guarantee or a DAU-to-QPS conversion. The report is
+written only when every phase passes, so a failed run leaves no phase metrics.
 
 Current reports separate all-response (`searchAll`) and successful-only (`search200`)
 latencies. The local baseline and exploratory-stress acceptance rules are documented

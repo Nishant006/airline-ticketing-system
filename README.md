@@ -290,11 +290,14 @@ The transaction writer is a separate Spring bean so rollback completes before
 conflict enrichment. [HLD](hld/architecture.md) and [LLD](lld/design.md) explain
 alternatives, costs and extension boundaries.
 
-At 500 schedules and 600,000 synthetic allocation rows, a local warm-cache HTTP
-sample after remediation had eight-worker search p95 7.332 ms. A separate 25:1
-mixed run at 16/64/192 clients had search p95 15.049/34.228/97.745 ms.
-All 816 disjoint bookings succeeded; at 192 clients, one of 14,400 searches
-returned an overload 503. No measured search response exceeded one second.
+At 500 schedules and 600,000 synthetic allocation rows, the latest recorded full run
+(R2, 2026-10-21) measured warm read-only search p95 of 2.589 ms sequentially and
+6.858 ms at eight workers. In the 25:1 mixed run, search p95 was
+12.515/32.393/97.293 ms at 16/64/192 clients. All 816 disjoint bookings succeeded;
+the 192-client phase shed 2 of 14,400 searches as explicit 503s. No measured search
+exceeded one second. `MixedLoadIT` also fails intermittently with a connect-time
+connection reset (3 of 7 recorded runs; cause not established). Every run, its
+conditions and its limitations are in the [NFR evidence ledger](tests/nfr-evidence.md).
 These short closed-loop samples are not sustained, cold-cache or production
 capacity guarantees. Existing indexes
 were used; no speculative cache/index was added. Bounded pagination/lazy loading
@@ -406,6 +409,13 @@ All schedule times/dates use UTC; audit instants use `TIMESTAMPTZ`. No airport-l
 conversion or arrival-date calculation is provided. Arrival may precede departure.
 The agreed window is exactly 365 dates: `[today, today+365)`, not a calendar-year
 interval; an injected UTC clock is evaluated per request, including leap years.
+
+Search filters by date window only, so a flight that departed earlier today still
+appears in that day's results. This is accepted staleness under the clarification that
+search may be stale if booking reports the change: booking it returns 409
+`FLIGHT_DEPARTED`. Departure is checked when the request is validated and again at the
+start of the booking write, not at commit, so a request that starts seconds before
+departure can still commit.
 
 One immutable schedule per flight number, UUID references, departure cutoff and
 409 for repeated/departed cancellation are explicit design/user policy choices.

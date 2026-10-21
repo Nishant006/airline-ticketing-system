@@ -172,13 +172,15 @@ are not exposed to unauthenticated callers. Correlation identifiers are validate
 echoed and cleared from MDC after requests; passenger names and payloads are not logged.
 
 Search was measured through real HTTP with 500 schedules and 600,000 synthetic
-active/historical allocations: the post-review eight-worker p95 was 7.332 ms.
-The separate 25:1 mixed run at 16/64/192 clients measured search p95
-15.049/34.228/97.745 ms. All 816 disjoint bookings succeeded; the 192-client phase
-shed one of 14,400 searches with 503. No measured search response exceeded one second.
-These phases lasted 0.879/2.268/6.120 seconds, not a sustained capacity certification. See
-[LLD](../lld/design.md#query-audit-and-measured-performance) for dataset,
-actual SQL plan and limitations. No lazy-loading API is presently necessary; if scale
+active/historical allocations. In the latest recorded full run (R2, 2026-10-21) the
+eight-worker search p95 was 6.858 ms, and the 25:1 mixed run at 16/64/192 clients
+measured search p95 12.515/32.393/97.293 ms. All 816 disjoint bookings succeeded; the
+192-client phase shed 2 of 14,400 searches as explicit 503s. No measured search
+exceeded one second. The phases lasted about 1/2/6 seconds, so this is not a sustained
+capacity certification, and the mixed-load test fails intermittently with a connect-time
+reset. See the [NFR evidence ledger](../tests/nfr-evidence.md) for every run and
+condition, and [LLD](../lld/design.md#query-audit-and-measured-performance) for the
+dataset, SQL plan and query costs. No lazy-loading API is presently necessary; if scale
 changes, bounded pagination/lazy loading is a measured follow-up, not an existing
 endpoint or unlimited-throughput claim.
 

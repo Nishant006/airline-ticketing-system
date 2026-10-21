@@ -107,7 +107,14 @@ phases are exploratory stress, allowing explicit 503 overload responses but not 
 all-shed phase. `searchAll` includes all search responses; `search200` includes only
 successful results, so fast overload rejections cannot hide successful-search latency.
 All disjoint bookings must return 201 in every phase; the hot-seat race still requires
-one winner and no duplicate active allocations.
+one winner and no duplicate active allocations. `target/mixed-load.txt` is written only
+after every phase and final assertion succeed, so a failed run leaves no phase metrics
+(and may leave an older report in place). The test fails intermittently with a
+connect-time connection reset whose cause is not established; it is not retried.
+
+Every recorded run, its conditions, per-scenario results and latency tables are kept in
+the [NFR evidence ledger](nfr-evidence.md). Update that file, not the README/HLD/LLD,
+when new measurements are taken.
 
 The user accepted a stateless backend and delegated scaling judgment without a fixed
 peak request rate. These short warm-cache, local closed-loop checks are not an agreed

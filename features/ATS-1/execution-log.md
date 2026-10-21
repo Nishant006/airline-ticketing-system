@@ -96,6 +96,18 @@ The index was left as found rather than restaged without approval. Only the
 disposable `ats-postman-0effb298` containers, network, volume and app image were
 removed after verification; pre-existing services/data were not touched.
 
+## Three-way requirements audit
+
+On 2026-10-21 three independent read-only audits against the brief, clarifications and
+user decisions were merged and deduplicated. The user approved: per-decision option
+tables, one NFR evidence ledger, the `ScheduleIT` rollback fix, documentation drift fixes
+and two policy notes. They declined `MixedLoadIT` instrumentation and diagnostic re-runs,
+and accepted that already-departed flights may still appear in search.
+
+| Gate | Changes and evidence |
+|---|---|
+| Audit 14: merged audit corrections | `ScheduleIT`'s rollback test previously relied on the Wednesday CHECK constraint, which could fire before any earlier weekday row was written because `Set.copyOf` gives no insertion order. A test-only trigger now rejects whichever weekday row is inserted second, and is dropped in `finally`; 0 parent and 0 weekday rows remain. Rewrote `decision-log.md` as 21 decisions with option tables (verdict, used, strengths, weaknesses, why/why not now, better when) and a table mapping every strategy named in FR4/FR7/FR8 to its decision. Added `tests/nfr-evidence.md`: requirement map, environment, fixture, 13 scenarios with conditions and acceptance, a dated run register, per-run results and latency tables, the intermittent `MixedLoadIT` connect-time reset (3 of 7 recorded runs, cause unknown, not retried) and what the evidence does not prove. README/HLD/LLD now give a dated summary and link to the ledger instead of repeating undated numbers; regenerated the HLD PDF with the same `cupsfilter` method and verified its extracted text equals the Markdown. Corrected `Airport.code`, the sanitized (not length-bounded) instance identifier and off-by-one clarification line references; documented the departed-flight search staleness, validation/write-start departure checks, lexical seat ordering and the inert `reWriteBatchedInserts`. Final isolated Java 21 `./mvnw -B -ntp verify` (R2, 2026-10-21 21:15 IST) passed 32 unit plus 57 integration cases with zero failures/errors/skips, and Spotless kept all 87 Java files clean. No production code, migration, dependency or container configuration changed. The brief, HEAD `814a891` and the 11 pre-existing staged entries remain unchanged; no commit or push. `tests/nfr-evidence.md` appeared staged by the IDE on creation and was left as found. |
+
 ## Historical execution
 
 | Timestamp | Skill | Action | Key Decision | Outcome |

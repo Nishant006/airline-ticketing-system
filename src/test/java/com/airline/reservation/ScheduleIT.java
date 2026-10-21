@@ -104,10 +104,27 @@ class ScheduleIT extends IntegrationSupport {
 
   @Test
   void weekdayInsertionFailureRollsBackParentAndEarlierWeekdays() {
+    // Faults whichever weekday row is written second, so an earlier sibling row is
+    // guaranteed to exist in the transaction regardless of Set iteration order.
     jdbc.sql(
             """
-                                ALTER TABLE flight_schedule_day ADD CONSTRAINT test_reject_wednesday
-                                CHECK (day_of_week <> 3)
+                                CREATE FUNCTION test_reject_second_weekday() RETURNS trigger
+                                LANGUAGE plpgsql AS $$
+                                BEGIN
+                                  IF EXISTS (SELECT 1 FROM flight_schedule_day
+                                             WHERE schedule_id = NEW.schedule_id) THEN
+                                    RAISE EXCEPTION 'test fault after an earlier weekday write'
+                                      USING ERRCODE = 'check_violation';
+                                  END IF;
+                                  RETURN NEW;
+                                END $$
+                                """)
+        .update();
+    jdbc.sql(
+            """
+                                CREATE TRIGGER test_reject_second_weekday
+                                BEFORE INSERT ON flight_schedule_day
+                                FOR EACH ROW EXECUTE FUNCTION test_reject_second_weekday()
                                 """)
         .update();
     try {
@@ -121,12 +138,15 @@ class ScheduleIT extends IntegrationSupport {
                           LocalTime.of(9, 30),
                           LocalTime.of(13, 45),
                           "A320-001",
-                          List.of(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY))))
-          .isInstanceOf(DataIntegrityViolationException.class);
+                          List.of(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY, DayOfWeek.FRIDAY))))
+          .isInstanceOf(DataIntegrityViolationException.class)
+          .rootCause()
+          .hasMessageContaining("test fault after an earlier weekday write");
       assertThat(count("flight_schedule")).isZero();
       assertThat(count("flight_schedule_day")).isZero();
     } finally {
-      jdbc.sql("ALTER TABLE flight_schedule_day DROP CONSTRAINT test_reject_wednesday").update();
+      jdbc.sql("DROP TRIGGER test_reject_second_weekday ON flight_schedule_day").update();
+      jdbc.sql("DROP FUNCTION test_reject_second_weekday()").update();
     }
   }
 }
