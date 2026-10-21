@@ -8,7 +8,7 @@ of that file. User decisions recorded in [spec.md](spec.md) and the
 **References.** Code references are `file:line` at commit `bca3c84`. Java paths are
 relative to `src/main/java/com/airline/reservation/`; SQL is in `db/migrations/`
 (`V1` = `V1__baseline_schema.sql`, `V2` = `V2__seed_reference_data.sql`). Scenario IDs
-S1-S13 and run IDs (H0-H4, F1-F3, R1-R3) refer to
+S1-S13 and run IDs (H0-H4, F1-F3, R1-R6) refer to
 [NFR evidence](../../tests/nfr-evidence.md), the only document that records measured
 numbers. This log explains *why*; it repeats no measurements.
 
@@ -62,7 +62,7 @@ Verdicts are contextual. “Unsuitable here” never means “wrong everywhere�
 | [D10](#d10-persistence-and-schema-ownership) | Persistence | Spring Data JPA + Flyway SQL migrations; one native upsert | Brief 238-247; user policy |
 | [D11](#d11-code-organization) | Code organization | Package-by-layer, enforced by ArchUnit | Brief 188-189; user policy |
 | [D12](#d12-service-contracts) | Service contracts | Narrow use-case interfaces with immutable records | Brief 189, 195 |
-| [D13](#d13-orm-fetching-and-writes) | ORM fetching and writes | Search projection; two to-one entity graphs; OSIV off; IDENTITY ids | Brief 196 |
+| [D13](#d13-orm-fetching-and-writes) | ORM fetching and writes | Search and cancellation-lookup projections; one to-one entity graph; OSIV off; IDENTITY ids | Brief 196 |
 | [D14](#d14-time-and-booking-horizon) | Time and horizon | UTC, injected `Clock`, `[today, today + 365 days)` | Brief 37, 92-93; assumptions 305-307 |
 | [D15](#d15-public-identity) | Public identity | Flight = number + date; booking reference = random UUID | Brief 151 |
 | [D16](#d16-api-scope-and-retries) | API scope and retries | The five required operations; no idempotency keys | Brief 29-37 |
@@ -170,13 +170,14 @@ status `BOOKED`, whichever replica wrote it. A booking holds all of its seats or
 **Implementation.**
 - `uq_booking_seat_active ON booking_seat (flight_instance_id, seat_label) WHERE status =
   'BOOKED'` (`V1:77`).
-- `BookingTransactionServiceImpl.create` (`service/impl/BookingTransactionServiceImpl.java:32-51`)
-  runs in one transaction. It rechecks the window and departure (36-37), sorts seats by
-  label (40), creates the reference (42) and inserts the booking, then its seats
-  (`persist`, 53-69).
+- `BookingTransactionServiceImpl.create` (`service/impl/BookingTransactionServiceImpl.java:32-47`)
+  runs in one transaction. It rechecks the window and departure (36-37), creates the
+  reference (38), then `persist` (49-68) inserts the booking and its seats sorted by
+  label (58).
 - Only a unique violation of `uq_booking_seat_active` becomes `SeatConflictException`
-  (64). The check is SQLSTATE 23505 plus the constraint name
-  (`exception/PersistenceConstraints.java:9-18`). Any other integrity error is rethrown
+  (62-64). The check is Hibernate's `UNIQUE` constraint kind, which Hibernate derives
+  from SQLSTATE 23505, plus the constraint name
+  (`exception/PersistenceConstraints.java:12-21`). Any other integrity error is rethrown
   and ends as 500.
 - After the rollback, `BookingServiceImpl.createBooking`
   (`service/impl/BookingServiceImpl.java:72-89`) reads the currently booked seats and
@@ -227,8 +228,10 @@ coordinates them at all.
 - Failure: a crash before commit rolls everything back, so nothing is ever half-booked.
   A booking that races with the cancellation of the same seat waits for the
   cancellation (D4).
-- Seat order is lexical (`10A` sorts before `2A`). Any total order prevents cycles; the
-  only visible effect is the order of seats in the response.
+- Seat inserts use lexical label order (`10A` before `2A`); any total order prevents
+  cycles. Responses do not expose it: a booking returns seats in request order (seat
+  *i* belongs to passenger *i*), and a cancellation returns them in natural row order
+  (`2A` before `10A`, `repository/BookingSeatRepository.java:20-26`).
 
 **Limitations and evidence.** There are no seat holds: a user can lose a seat between
 viewing the map and booking, and is told so with 409 (reply 358-361). The partial index
@@ -296,14 +299,14 @@ returns 409 `FLIGHT_DEPARTED`.
 move from `BOOKED` to `RELEASED` in the same transaction, or nothing changes.
 
 **Implementation.** `CancellationServiceImpl.cancel`
-(`service/impl/CancellationServiceImpl.java:29-76`) runs in one transaction:
-1. `findByReference` (404 `BOOKING_NOT_FOUND`), then `requireCancellable` (64):
+(`service/impl/CancellationServiceImpl.java:27-65`) runs in one transaction:
+1. `findDetailsByReference` (404 `BOOKING_NOT_FOUND`), then `requireCancellable` (53):
    `CANCELLED` → 409 `ALREADY_CANCELLED`; departed → 409 `FLIGHT_DEPARTED`.
-2. `findAssignedSeats` (34) reads the seats for the response.
-3. `cancelConfirmed` (35; `repository/BookingRepository.java:16-23`) is equivalent to
+2. `findAssignedSeats` (32) reads the seats for the response.
+3. `cancelConfirmed` (33; `repository/BookingRepository.java:22-29`) is equivalent to
    `UPDATE booking SET status = 'CANCELLED', cancelled_at = ? WHERE id = ? AND status =
    'CONFIRMED'`. A row count other than 1 → 409 `ALREADY_CANCELLED`.
-4. `releaseAllSeats` (71-76; `repository/BookingSeatRepository.java:24-30`) sets
+4. `releaseAllSeats` (60-65; `repository/BookingSeatRepository.java:28-34`) sets
    `BOOKED` → `RELEASED`. If the count is 0 or differs from step 2, it throws
    `IllegalStateException`: the transaction rolls back and the client gets 500.
 
@@ -361,8 +364,9 @@ flight, computed from committed data at query time.
   seats, computes `rows × letters − count(active seats)`, filters by route and ISO
   weekday, orders by departure time and flight number, and returns `FlightAvailability`
   records (no entities).
-- `FlightServiceImpl.search` (`service/impl/FlightServiceImpl.java:30`) first applies
-  the date window and the origin ≠ destination rule.
+- `FlightServiceImpl.search` (`service/impl/FlightServiceImpl.java:30-39`) first applies
+  the date window and the origin ≠ destination rule, then drops rows whose UTC departure
+  instant has been reached (`FlightDatePolicy.hasDeparted`).
 - The seat map lists active labels (`repository/BookingSeatRepository.java:12-18`)
   against the layout (D3).
 - There is no counter column and no cache.
@@ -382,19 +386,24 @@ map shows 180 free, and a reconciliation job becomes necessary. The live count c
 because both are computed from the same rows.
 
 **Departed flights today (search policy).** Search rejects a date outside the window
-(422 `DATE_OUT_OF_WINDOW`) and otherwise matches route and weekday; it does not filter by
-departure time. A flight that departed earlier today is therefore still
-listed, and a fresh query lists it too, so this is a search policy, not staleness. Booking
-it returns 409 `FLIGHT_DEPARTED` (`service/FlightDatePolicy.java:28-33`). The user
-accepted this policy on 2026-10-21 (execution log 105; spec 134). Changing it would mean
-adding a departure-time filter for today's date.
+(422 `DATE_OUT_OF_WINDOW`), matches route and weekday in SQL, and then omits flights
+whose UTC departure instant has been reached (`service/FlightDatePolicy.java:28-31`).
+Booking uses the same boundary (`requireBeforeDeparture`, 33-37), so search never lists
+a flight that a fresh booking would refuse as departed. The filter runs in Java on at
+most one row per matching schedule, so the SQL statement and its plan are unchanged.
+Search is still a snapshot: a flight that departs between search and booking returns
+409 `FLIGHT_DEPARTED` (reply 358-361). The user chose this on 2026-10-22 (spec 134),
+reversing the 2026-10-21 policy that listed departed flights (execution log 105).
+Seat maps of departed flights remain readable.
 
 **Consequences.** Reads run in read-only transactions on the read pool (D7) and never
 write. A result is a snapshot: a seat can be taken between search and booking, and the
 booking then returns 409 naming the seats (reply 358-361, D2).
 
 **Limitations and evidence.** There are no holds, and counts age as soon as they are
-returned. Evidence: S4 (`FlightSearchIT`, `SeatMapIT`), S9 (`SearchPerformanceIT`: one SQL
+returned. Evidence: S4 (`FlightSearchIT`, including
+`departedFlightsAreHiddenOnlyFromTodaysSearch`, which also reads a departed flight's
+seat map; `SeatMapIT`), S9 (`SearchPerformanceIT`: one SQL
 statement, no entity loads, every search under 1 s with 500 schedules and 600,000 seat
 rows), S10.
 
@@ -421,7 +430,7 @@ request holds at most one connection at a time.
   starts (`service/impl/FlightInstanceServiceImpl.java:15-28`).
 - Unit 3: `BookingTransactionService.create`, in a separate bean so Spring's proxy
   applies, inserts the booking and its seats
-  (`service/impl/BookingTransactionServiceImpl.java:32-51`).
+  (`service/impl/BookingTransactionServiceImpl.java:32-68`).
 - Unit 4, only after a seat conflict: `FlightLookupService.unavailableSeats` reads in a
   new transaction (`service/impl/FlightLookupServiceImpl.java:46-47`).
 - Both pools use READ COMMITTED (`application.yml:15`; `config/DataSourceConfiguration.java:28-58`).
@@ -527,6 +536,10 @@ run on the read pool.
   latency for stability (reply 363-365).
 - The limits bound database waits only, not HTTP queueing, network time or opening new
   connections.
+- Virtual threads stay off (`spring.threads.virtual.enabled: false`,
+  `application.yml:29-31`). The pools, not request threads, bound database concurrency,
+  so virtual threads would admit more concurrent requests that then wait on the same
+  15 connections; brief 196 asks for no optimization beyond a reasonable implementation.
 
 **Limitations and evidence.** Both pools use the same primary, so this isolates
 connections, not database CPU or I/O. Evidence: S7 (`ReadIsolationIT`: an exhausted read
@@ -742,22 +755,25 @@ lazy load runs outside a transaction.
 - Search is one JPQL constructor expression into `FlightAvailability` records, with the
   live count (`repository/FlightScheduleRepository.java:22-35`). No entity is loaded.
 - Seat maps and conflict checks read seat labels with scalar queries
-  (`repository/BookingSeatRepository.java:12-22`).
-- Two to-one entity graphs, each reading one row by a unique key with no collection:
-  `FlightScheduleRepository.findOperating` fetches `aircraft` (14-20);
-  `BookingRepository.findByReference` fetches `flightInstance.schedule` (13-14).
+  (`repository/BookingSeatRepository.java:12-26`).
+- Cancellation looks up the booking with one joined JPQL constructor expression into
+  `BookingDetails` (`repository/BookingRepository.java:13-20`). No entity is loaded, so
+  nothing managed can disagree with the bulk updates that follow, and nothing is
+  dirty-checked at commit.
+- One to-one entity graph reads one row by a unique key with no collection:
+  `FlightScheduleRepository.findOperating` fetches `aircraft` (14-20).
 - Every `@ManyToOne` is `LAZY` (`entity/`); open-session-in-view is off
   (`application.yml:22`).
-- Cancellation uses status-guarded bulk updates (`BookingRepository.java:16-23`,
-  `BookingSeatRepository.java:24-30`; D4).
+- Cancellation uses status-guarded bulk updates (`BookingRepository.java:22-29`,
+  `BookingSeatRepository.java:28-34`; D4).
 - IDs use `IDENTITY`, so seat inserts are one statement per seat.
 
 | Approach | Verdict | How it works | Advantages | Costs and failure modes | Why chosen / why not now | When preferable (architecture) |
 |---|---|---|---|---|---|---|
-| **Projection for search; scalar seat queries; to-one entity graphs; open-session-in-view off** | **Chosen** | As above | Fixed statement counts; nothing lazy outside a transaction; small payloads | A few explicit queries to maintain | Plain Spring Data features give one statement per search (S9) | Read-heavy APIs on JPA |
+| **Projections for search and the cancellation lookup; scalar seat queries; one to-one entity graph; open-session-in-view off** | **Chosen** | As above | Fixed statement counts; nothing lazy outside a transaction; small payloads | A few explicit queries to maintain | Plain Spring Data features give one statement per search (S9) and no entity loads in cancellation | Read-heavy APIs on JPA |
 | Lazy loading with open-session-in-view (Spring Boot's default) | Viable alternative | Entities load on access, including during JSON rendering | Least code | N+1 queries per result row; the persistence context and its connection stay open until the response is written | Spec 85 records it as off; hidden queries and longer connection holds would weaken the pool isolation (D7) | Server-rendered pages with simple graphs |
 | Eager to-one fetching (`FetchType.EAGER`, the JPA default for to-one) | Viable alternative | Associations always loaded | No lazy-initialization errors | In JPQL, each eager association not join-fetched costs an extra select per row (N+1); every use case pays for every association | Use cases need different graphs; explicit graphs keep each query minimal | Small associations that every use case needs |
-| DTO projections for the lookups as well | Viable alternative | Flight resolution and booking lookup return records from JPQL | No managed entities at all | More query text and records | Each entity graph already reads one row | Wide rows or large entities |
+| DTO projection for flight resolution as well | Viable alternative | `findOperating` returns a record from JPQL instead of the schedule with its aircraft | No managed entities on any path | More query text and one more record | `resolve` maps one row once and no bulk update follows it, so a managed copy cannot go stale | Wide rows or large entities |
 | `@BatchSize` or `default_batch_fetch_size` | Viable alternative | Lazy associations load in batches with `IN` lists | Fixes N+1 without explicit queries | Still several statements; tuning per association | No lazy association is traversed in a loop | Graphs with collections |
 | `SEQUENCE` IDs + JDBC batching (`hibernate.jdbc.batch_size`, `order_inserts`) | Viable alternative | Hibernate pre-allocates IDs and sends inserts in batches | Fewer round trips for many seats | A migration from IDENTITY; batch settings to tune | Bookings carry a few seats; one insert per seat is acceptable here | Large write batches with measured round-trip cost |
 
@@ -770,8 +786,15 @@ resolve the flight with its aircraft, then read its booked seat labels.
 IDENTITY IDs and no batch size is configured, so the driver has nothing to rewrite. It
 matters only after a move to SEQUENCE IDs with batching.
 
-**Limitations and evidence.** Evidence: S9 (`SearchPerformanceIT` asserts one prepared
-statement and zero entity loads per search).
+**Limitations and evidence.** Search counts `seatLabel`, a column held in the partial
+index `uq_booking_seat_active`, so the active-seat join can be an index-only scan
+([NFR evidence §7.3](../../tests/nfr-evidence.md#73-manual-sql-probe-active-seat-count-column));
+heap pages are still visited until vacuum marks them all-visible. Hibernate renders the
+enum constants in these JPQL statements as SQL literals (`status = 'BOOKED'`), so
+matching the partial index does not depend on bind values or on PostgreSQL's plan-cache
+mode. Evidence: S9 (`SearchPerformanceIT` asserts one prepared
+statement and zero entity loads per search); `CancellationIT` asserts four prepared
+statements and zero entity loads per cancellation.
 
 **Revisit when** bookings with many seats make insert round trips measurable, or a use case
 needs a collection fetch.
@@ -781,18 +804,20 @@ needs a collection fetch.
 **Driver.** Brief 37 and assumption 305 (“up to one year”); brief 92-93 (“365 days from
 the current date”); assumption 306 (UTC); assumption 307 (time-zone conversion out of
 scope). Engineering choice recorded in spec 41-45: UTC everywhere; exactly 365 dates as
-an explicit interpretation of the brief. User policy (execution log 105; spec 134):
-flights that departed earlier today may still appear in search.
+an explicit interpretation of the brief. User policy (spec 134, 2026-10-22): search omits
+flights whose UTC departure instant has been reached.
 
 **Invariant.** A travel date is valid when `today ≤ date < today + 365 days`, where
-`today` is the UTC date of an injected `Clock`. A booking or cancellation is refused once
-the flight's UTC departure instant is reached.
+`today` is the UTC date of an injected `Clock`. A flight has departed once the clock
+reaches its UTC departure instant; it is then omitted from search, and booking or
+cancellation is refused.
 
 **Implementation.**
 - `service/FlightDatePolicy.java`:
   - `requireInWindow` (20-26): `date.isBefore(today) || !date.isBefore(today.plusDays(windowDays))`
     raises `DATE_OUT_OF_WINDOW` (422).
-  - `requireBeforeDeparture` (28-33) raises `FLIGHT_DEPARTED` (409).
+  - `hasDeparted` (28-31) is the single definition: `!now.isBefore(departureInstant)`.
+  - `requireBeforeDeparture` (33-37) delegates to it and raises `FLIGHT_DEPARTED` (409).
 - `windowDays` is fixed by `config/BookingProperties.java:10` (`@Min(365) @Max(365)`) and
   `application.yml:73`.
 - `config/TimeConfiguration.java:11` provides `Clock.systemUTC()`; tests inject a fixed
@@ -800,9 +825,10 @@ the flight's UTC departure instant is reached.
 - The window is checked by search (`FlightServiceImpl.java:31`), flight resolution
   (`FlightLookupServiceImpl.java:29`) and again at the start of the booking transaction
   (`BookingTransactionServiceImpl.java:36`).
-- Departure is checked by the coordinator (`BookingServiceImpl.java:42`), at the start of
+- Departure is filtered from search results (`FlightServiceImpl.java:37`), checked by the
+  coordinator (`BookingServiceImpl.java:42`), at the start of
   the booking transaction (`BookingTransactionServiceImpl.java:37`) and by cancellation
-  (`CancellationServiceImpl.java:68`).
+  (`CancellationServiceImpl.java:57`).
 
 | Approach | Verdict | How it works | Advantages | Costs and failure modes | Why chosen / why not now | When preferable (architecture) |
 |---|---|---|---|---|---|---|
@@ -811,20 +837,30 @@ the flight's UTC departure instant is reached.
 | Host-local time (`LocalDate.now()` in the JVM zone) | Unsuitable here | Uses the server's default zone | No configuration | Replicas in different zones disagree about “today” near midnight | Conflicts with assumption 306 (UTC) and with identical behaviour on every replica (reply 346-348) | Single-host tools in one zone |
 | Airport-local times with zone conversion | Unsuitable here | Store schedules in each airport's zone; convert for departure | Realistic for travellers | Zone data, daylight-saving gaps and overlaps | Out of scope (assumption 307; brief 29-30) | A real multi-zone airline |
 | Departure check at commit (trigger or final statement) | Viable alternative | Re-check the departure time just before commit | Narrows the gap between check and commit | Cannot remove it: time still passes before the commit completes; more code | The gap is the length of one short transaction | Strict regulatory cut-offs |
-| Search hides flights that have already departed today | Unsuitable here | Filter by departure instant in the search query | Fewer unbookable results | A time-dependent predicate in the hot query; search still reports a few-seconds-old view (reply 358-361) | The user accepted departed flights in search on 2026-10-21 (execution log 105; spec 134); booking returns `FLIGHT_DEPARTED` | User-facing search where unbookable rows are confusing |
+| **Search omits departed flights with a Java filter after the query** | **Chosen** | `hasDeparted` is applied to each `FlightAvailability` row returned by the unchanged JPQL | One definition of “departed” shared with booking (DRY); SQL text and plans unchanged; tested with the fixed `Clock` | Departed rows are still read and counted, then discarded (at most one per matching schedule) | User decision 2026-10-22 (spec 134): search no longer lists flights that a fresh booking would refuse | User-facing search (this brief) |
+| Departure predicate in the JPQL query | Viable alternative | Add `date > today OR departureTime > now` with the current time as a parameter | Departed rows never leave the database | Duplicates the departure rule in SQL; adds a clock-dependent parameter to the hot query, so its plan must be re-verified | The Java filter discards at most one row per schedule, so pushing it down saves almost nothing | Large result sets where filtering in the database saves transfer |
+| List departed flights; refuse only at booking | Viable alternative | Search matches route and weekday only; booking returns 409 `FLIGHT_DEPARTED` | Simplest query; search does not depend on the time of day | Users see flights they cannot book, even from a fresh query | Previous policy (2026-10-21, execution log 105), reversed by the user on 2026-10-22 | Back-office views that must show the whole day |
 
 **Example.** On 2026-10-21 (UTC) the valid dates are 2026-10-21 to 2027-10-20 inclusive:
 365 dates. On 2027-10-21, `plusYears(1)` would allow 366 dates, because that window
 contains 2028-02-29; the chosen rule still allows 365. A flight departing today at 09:00
-UTC appears in a search at 10:00 UTC, but booking it returns 409 `FLIGHT_DEPARTED`.
+UTC is listed by a search at 08:59 and omitted from one at 09:00 or later; it still
+appears when searching tomorrow's date. A booking that starts at 09:00 returns 409
+`FLIGHT_DEPARTED`.
 
-**Consequences.** Every replica computes the same window. A booking that starts just
-before departure can commit just after it.
+**Consequences.** Every replica computes the same window and the same departure boundary.
+A booking that starts just before departure can commit just after it.
 
-**Limitations and evidence.** Search lists flights that departed earlier today (user
-policy above).
+**Limitations and evidence.** A flight can depart between search and booking; booking then
+returns 409 `FLIGHT_DEPARTED` (reply 358-361). Seat maps of departed flights remain
+readable.
 Evidence: S1 (`FlightDatePolicyTest`: exactly 365 dates across a leap year; exact UTC
-departure boundary); S4 (`FlightSearchIT.windowBoundariesAreEnforcedOnSearch`); S6
+departure boundary for `hasDeparted` and `requireBeforeDeparture`); S4
+(`FlightSearchIT.windowBoundariesAreEnforcedOnSearch`;
+`SeatMapIT.windowBoundariesAreEnforcedOnSeatMap`;
+`FlightSearchIT.departedFlightsAreHiddenOnlyFromTodaysSearch`: 07:59, 08:00 and 08:01
+departures against a fixed 08:00 UTC clock, and the departed flight's seat map still
+returns all 180 seats); S6
 (`CancellationIT.departedBookingCannotBeCancelled`).
 
 **Revisit when** airport-local times enter scope, or the business needs a hard cut-off
@@ -841,7 +877,7 @@ flight is identified by `(flightNumber, flightDate)`.
 
 **Implementation.**
 - `UUID.randomUUID()` (version 4) in the booking transaction
-  (`BookingTransactionServiceImpl.java:42`).
+  (`BookingTransactionServiceImpl.java:38`).
 - `uq_booking_reference` (`V1:56`) is the final guard; an actual collision would surface
   as a 500, not as a silent duplicate.
 - `uq_schedule_flight_number` (`V1:29`) makes the flight number unique;
@@ -899,7 +935,7 @@ would create a second booking.
 main operational cost of the minimal scope and is documented rather than hidden.
 
 **Limitations and evidence.** Evidence: S4 (`HttpContractsIT`: unknown routes and methods);
-S12 (Postman/Newman collection in `postman/`, historical run).
+S12 (Postman/Newman collection in `postman/`, runs H4 and R6).
 
 **Revisit when** clients retry automatically (mobile networks, gateways), or customers need
 to look up their bookings.
@@ -991,12 +1027,13 @@ its correlation ID and instance ID.
   | 503 | `SERVICE_UNAVAILABLE`, with `Retry-After: 1` |
   | 500 | `INTERNAL_ERROR` |
 
-- **Seat conflict.** `BookingTransactionServiceImpl.java:63-65` converts a unique
-  violation of `uq_booking_seat_active` (SQLSTATE `23505` and the constraint name, checked
-  by `exception/PersistenceConstraints.java`) into `SeatConflictException`, and nothing
-  else. After the rollback, `BookingServiceImpl.java:79-87` reads which requested seats
+- **Seat conflict.** `BookingTransactionServiceImpl.java:61-64` converts a unique
+  violation of `uq_booking_seat_active` (Hibernate's `UNIQUE` constraint kind and the
+  constraint name, checked by `exception/PersistenceConstraints.java`) into
+  `SeatConflictException`, and nothing else. After the rollback,
+  `BookingServiceImpl.java:79-87` reads which requested seats
   are now taken and raises 409 `SEAT_UNAVAILABLE` with `currentlyUnavailableSeats`.
-  `ScheduleServiceImpl.java:70-73` maps only `uq_schedule_flight_number` to 409
+  `ScheduleServiceImpl.java:70-74` maps only `uq_schedule_flight_number` to 409
   `DUPLICATE_SCHEDULE`. Every other integrity violation stays a 500.
 - **Database unavailable.** `databaseUnavailable` (`GlobalExceptionHandler.java:68-82`)
   maps `TransientDataAccessException`, `DataAccessResourceFailureException` and
@@ -1020,6 +1057,12 @@ its correlation ID and instance ID.
   constraint name and the first application stack frame, never exception messages.
   Hibernate's SQL error loggers are off (`application.yml:68-69`), because PostgreSQL
   error details can contain row values such as passenger names.
+- **Success events are logged only after commit.** `booking_cancelled` and
+  `schedule_created` are written by the controllers, after the `@Transactional` service
+  call has returned and committed. `booking_confirmed` is written by the coordinator,
+  which runs with `Propagation.NEVER` (`BookingServiceImpl.java:28`), so the booking
+  transaction has already committed. A rollback therefore never leaves a success line in
+  the log.
 
 | Approach | Verdict | How it works | Advantages | Costs and failure modes | Why chosen / why not now | When preferable (architecture) |
 |---|---|---|---|---|---|---|
@@ -1352,14 +1395,14 @@ Every response body is either the resource or an RFC 9457 problem (D18).
 | `PUT`, `PATCH` or `DELETE` on `/flight-schedules/{flightNumber}` | Unsuitable here | Full CRUD on schedules | Familiar shape | Lets a schedule change after creation | Brief 303 | When schedules may change (D15 compares versioned schedules) |
 | GraphQL or gRPC | Unsuitable here | One query endpoint (GraphQL) or binary RPC over HTTP/2 (gRPC) | Clients choose the fields (GraphQL); compact, typed contracts (gRPC) | Not resource-oriented; separate tooling and error model | Brief 190 asks for RESTful API design | GraphQL to aggregate many resources for varied clients; gRPC between internal services |
 
-**Example.** One booking through the cancel command (`CancellationIT:59`;
-`HttpContractsIT:59`; test paths under `src/test/java/com/airline/reservation/`):
+**Example.** One booking through the cancel command (`CancellationIT:60`;
+`HttpContractsIT:70`; test paths under `src/test/java/com/airline/reservation/`):
 
 ```text
 POST /api/v1/bookings/{reference}/cancel    → 200, "bookingStatus": "CANCELLED"
 POST /api/v1/bookings/{reference}/cancel    → 409, "errorCode": "ALREADY_CANCELLED"
 POST /api/v1/bookings/{random UUID}/cancel  → 404, "errorCode": "BOOKING_NOT_FOUND"
-POST /api/v1/bookings/not-a-uuid/cancel     → 400
+POST /api/v1/bookings/not-a-uuid/cancel     → 400, "errorCode": "VALIDATION_FAILED"
 ```
 
 The client can tell "already cancelled" from "never existed". After a `DELETE`, a repeated
@@ -1375,7 +1418,7 @@ retrieval later is additive: a `GET /api/v1/bookings/{bookingReference}` would a
 up, because there is no retrieval endpoint (D16). The admin prefix is not access control
 (spec 231). No test checks the generated OpenAPI document. Evidence: `HttpContractsIT` and
 `CancellationIT` (S4, S6) for status codes and the cancel contract; `ScheduleControllerTest`
-(S1) for the admin endpoint; the Postman collection (S12, historical) called all five
+(S1) for the admin endpoint; the Postman collection (S12, H4 and R6) called all five
 operations over HTTP.
 
 **Revisit when** booking retrieval enters scope (add the GET and a `Location` header),
@@ -1412,12 +1455,12 @@ Domain rules (layer 3):
 - `UNKNOWN_REFERENCE` (422): an airport or aircraft that is not preloaded
   (`ScheduleServiceImpl.java:81`).
 - `DATE_OUT_OF_WINDOW` (422) and `FLIGHT_DEPARTED` (409) (`service/FlightDatePolicy.java:24,
-  31`; D14); `FLIGHT_NOT_FOUND` (404) when the flight does not operate on that date
+  35`; D14); `FLIGHT_NOT_FOUND` (404) when the flight does not operate on that date
   (`service/impl/FlightLookupServiceImpl.java:36`).
 - `DUPLICATE_SEAT` (400) and `SEAT_NOT_ON_AIRCRAFT` (422, naming the seat)
   (`service/impl/BookingServiceImpl.java:55-70`, using `model/SeatLayout.java:26-32`).
 - `BOOKING_NOT_FOUND` (404) and `ALREADY_CANCELLED` (409)
-  (`service/impl/CancellationServiceImpl.java:53, 79`).
+  (`service/impl/CancellationServiceImpl.java:50, 68`).
 - Entity invariants guard reference data loaded from the database: the `Aircraft`
   constructor and the `SeatLayout` record (rows 1-99; 1-10 distinct letters A-Z) throw
   `IllegalArgumentException` (`entity/Aircraft.java:32-41`, `model/SeatLayout.java:12-20`).
@@ -1434,9 +1477,9 @@ Database (layer 4, `V1`):
 - Only two violations are translated, both by constraint name through
   `exception/PersistenceConstraints.java`. `uq_booking_seat_active` becomes 409
   `SEAT_UNAVAILABLE` with `currentlyUnavailableSeats`, read after the rollback
-  (`service/impl/BookingTransactionServiceImpl.java:63-67`, `BookingServiceImpl.java:77-88`).
+  (`service/impl/BookingTransactionServiceImpl.java:61-66`, `BookingServiceImpl.java:77-88`).
   `uq_schedule_flight_number` becomes 409 `DUPLICATE_SCHEDULE`
-  (`ScheduleServiceImpl.java:70-73`). Any other violation is a 500, logged with SQL state
+  (`ScheduleServiceImpl.java:70-74`). Any other violation is a 500, logged with SQL state
   and constraint name but no payload (`GlobalExceptionHandler.java:155-198`).
 
 | Approach | Verdict | How it works | Advantages | Costs and failure modes | Why chosen / why not now | When preferable (architecture) |
@@ -1453,13 +1496,13 @@ Database (layer 4, `V1`):
 **Example.** One booking request meeting each layer, with the seeded aircraft (`V2:8-10`;
 test paths under `src/test/java/com/airline/reservation/`):
 1. Seat `01A` fails the seat-label pattern: 400 `VALIDATION_FAILED`, and no service method
-   runs (`HttpContractsIT:26-58`).
+   runs (`HttpContractsIT:27-75`).
 2. Seat `1F` on a flight flown by the ATR 72 (`AT72-001`, letters `ABCD`) is well-formed
    but not on the aircraft: 422 `SEAT_NOT_ON_AIRCRAFT`, before even the flight-instance row
-   is created (`BookingIT:113`).
+   is created (`BookingIT:117`).
 3. Two concurrent requests for the same free seat pass layers 1-3; `uq_booking_seat_active`
    admits one, and the other gets 409 `SEAT_UNAVAILABLE` (D2; S5, S10).
-4. A passenger named `""` is accepted and stored unchanged (brief 159; `BookingIT:101`).
+4. A passenger named `""` is accepted and stored unchanged (brief 159; `BookingIT:104`).
 
 **Consequences.** A format change edits one constant in `InputFormats`, which the request
 records, the command records and `FlightController` share; a new field constraint is
@@ -1468,23 +1511,27 @@ domain rules stop at the first failure. Because the database repeats the essenti
 (seat-label format, origin ≠ destination, one active owner per seat), a code path that
 skipped layers 1-3 still could not store a duplicate seat or a malformed label.
 
-**Limitations and evidence.** No test calls a service with an invalid command, so layer 2
-is untested; every invalid-input test enters through layer 1. No test asserts the contents
-of the `errors` list; tests assert the status and `errorCode`. Layer-2 rejections and
-invalid query parameters return no field paths. An entity-invariant failure would surface
-as a 500; `ck_aircraft_rows` and `ck_aircraft_letters` keep such reference data out of the
-database in the first place. Evidence: `CreateBookingRequestTest` (labels `01A`, `1a`,
+**Limitations and evidence.** Layer-2 rejections and invalid query or path parameters
+return no field paths. An entity-invariant failure would surface as a 500;
+`ck_aircraft_rows` and `ck_aircraft_letters` keep such reference data out of the database
+in the first place. Evidence: `CreateBookingRequestTest` (labels `01A`, `1a`,
 ` 1A`, `0A` and `100A` rejected; an empty passenger list rejected; an empty name accepted),
 `CreateScheduleRequestTest`, `ScheduleControllerTest` and `AircraftTest` (S1); `ScheduleIT`
 (duplicate weekdays; same origin and destination) and `DatabaseSchemaIT` (non-canonical
 labels, duplicate aircraft letters, a seat on another booking's instance) (S2);
-`HttpContractsIT` (malformed input, strict clocks) and `BookingIT` (names stored unchanged;
-an unrelated integrity failure is not reported as a seat conflict) (S4).
+`HttpContractsIT` (malformed input, strict clocks; seat `01A` yields exactly one `errors`
+entry, `{field: "passengers[0].seat", message}`, without the passenger name) and `BookingIT`
+(names stored unchanged; an unrelated integrity failure is not reported as a seat
+conflict) (S4). Layer 2 is tested without HTTP: `ScheduleIT` and `BookingIT` call the
+services with a null command and with one invalid field (`xy101`, `01A`), expect a
+`ConstraintViolationException` whose single path ends in that field, and find no row
+written; `GlobalExceptionHandlerTest` maps that exception to 400 `VALIDATION_FAILED` with
+no field list and keeps the rejected value out of the body and the log.
 
 **Revisit when** a second entry point appears, such as a message consumer or batch import
-(test layer 2 directly and add field paths to its 400), a future brief adds passenger
-details with rules, cross-field rules multiply (class-level constraints), or clients need
-lenient input (normalise at the edge, consistently).
+(add field paths to its 400), a future brief adds passenger details with rules, cross-field
+rules multiply (class-level constraints), or clients need lenient input (normalise at the
+edge, consistently).
 
 ## Maintaining this log
 

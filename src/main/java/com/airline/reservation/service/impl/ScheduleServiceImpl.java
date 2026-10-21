@@ -68,7 +68,8 @@ public class ScheduleServiceImpl implements ScheduleService {
     try {
       flightScheduleRepository.saveAndFlush(schedule);
     } catch (DataIntegrityViolationException exception) {
-      if (PersistenceConstraints.isUniqueViolationOf(exception, "uq_schedule_flight_number")) {
+      if (PersistenceConstraints.isUniqueViolationOf(
+          exception, PersistenceConstraints.UQ_SCHEDULE_FLIGHT_NUMBER)) {
         throw new BusinessException(
             ErrorCode.DUPLICATE_SCHEDULE, "Flight number already has a schedule");
       }

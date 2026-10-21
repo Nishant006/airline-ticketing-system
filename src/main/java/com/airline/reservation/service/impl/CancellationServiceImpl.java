@@ -1,7 +1,5 @@
 package com.airline.reservation.service.impl;
 
-import com.airline.reservation.entity.Booking;
-import com.airline.reservation.entity.FlightInstance;
 import com.airline.reservation.exception.BusinessException;
 import com.airline.reservation.exception.ErrorCode;
 import com.airline.reservation.model.BookingDetails;
@@ -46,19 +44,10 @@ public class CancellationServiceImpl implements CancellationService {
   }
 
   private BookingDetails findBooking(UUID reference) {
-    Booking booking =
-        bookingRepository
-            .findByReference(reference)
-            .orElseThrow(
-                () -> new BusinessException(ErrorCode.BOOKING_NOT_FOUND, "Booking does not exist"));
-    FlightInstance instance = booking.getFlightInstance();
-    return new BookingDetails(
-        booking.getId(),
-        reference,
-        instance.getSchedule().getFlightNumber(),
-        instance.getFlightDate(),
-        instance.getSchedule().getDepartureTime(),
-        booking.getStatus());
+    return bookingRepository
+        .findDetailsByReference(reference)
+        .orElseThrow(
+            () -> new BusinessException(ErrorCode.BOOKING_NOT_FOUND, "Booking does not exist"));
   }
 
   private void requireCancellable(BookingDetails booking) {

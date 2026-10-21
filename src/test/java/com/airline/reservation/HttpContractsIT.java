@@ -19,6 +19,7 @@ import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.RequestBuilder;
 
 @ExtendWith(OutputCaptureExtension.class)
 class HttpContractsIT extends IntegrationSupport {
@@ -33,30 +34,44 @@ class HttpContractsIT extends IntegrationSupport {
                                 """,
             """
                                 {"flightNumber":"XY101","flightDate":"2027-03-02","passengers":[{"name":null,"seat":"1A"}]}
-                                """,
-            """
-                                {"flightNumber":"XY101","flightDate":"2027-03-02","passengers":[{"name":"SensitiveFixture","seat":"01A"}]}
                                 """)) {
       mvc.perform(post("/api/v1/bookings").contentType(MediaType.APPLICATION_JSON).content(body))
           .andExpect(status().isBadRequest())
           .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
           .andExpect(jsonPath("$.errorCode").value("VALIDATION_FAILED"));
     }
-    mvc.perform(get("/api/v1/flights").param("originCode", "DXB").param("destinationCode", "LHR"))
-        .andExpect(status().isBadRequest());
-    mvc.perform(
+    MvcResult invalidSeat =
+        mvc.perform(
+                post("/api/v1/bookings")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        """
+                        {"flightNumber":"XY101","flightDate":"2027-03-02","passengers":[{"name":"SensitiveFixture","seat":"01A"}]}
+                        """))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.errorCode").value("VALIDATION_FAILED"))
+            .andExpect(jsonPath("$.errors.length()").value(1))
+            .andExpect(jsonPath("$.errors[0].length()").value(2))
+            .andExpect(jsonPath("$.errors[0].field").value("passengers[0].seat"))
+            .andExpect(jsonPath("$.errors[0].message").isNotEmpty())
+            .andReturn();
+    assertThat(invalidSeat.getResponse().getContentAsString()).doesNotContain("SensitiveFixture");
+    for (RequestBuilder request :
+        List.of(
+            get("/api/v1/flights").param("originCode", "DXB").param("destinationCode", "LHR"),
             get("/api/v1/flights")
                 .param("originCode", "dxb")
                 .param("destinationCode", "LHR")
-                .param("date", TODAY.toString()))
-        .andExpect(status().isBadRequest());
-    mvc.perform(
+                .param("date", TODAY.toString()),
             get("/api/v1/flights")
                 .param("originCode", "DXB")
                 .param("destinationCode", "LHR")
-                .param("date", "not-a-date"))
-        .andExpect(status().isBadRequest());
-    mvc.perform(post("/api/v1/bookings/not-a-uuid/cancel")).andExpect(status().isBadRequest());
+                .param("date", "not-a-date"),
+            post("/api/v1/bookings/not-a-uuid/cancel"))) {
+      mvc.perform(request)
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errorCode").value("VALIDATION_FAILED"));
+    }
   }
 
   @Test
@@ -84,7 +99,8 @@ class HttpContractsIT extends IntegrationSupport {
                                                  "departureTime":"09:30","arrivalTime":"13:45","aircraftId":"A320-001",
                                                  "daysOfOperation":["TUESDAY"]}
                                                 """))
-        .andExpect(status().isNotAcceptable());
+        .andExpect(status().isNotAcceptable())
+        .andExpect(jsonPath("$.errorCode").value("NOT_ACCEPTABLE"));
     assertThat(count("flight_schedule")).isZero();
     schedule("XY101", "A320-001");
     String body =
@@ -97,7 +113,8 @@ class HttpContractsIT extends IntegrationSupport {
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_XML)
                 .content(body))
-        .andExpect(status().isNotAcceptable());
+        .andExpect(status().isNotAcceptable())
+        .andExpect(jsonPath("$.errorCode").value("NOT_ACCEPTABLE"));
     assertThat(count("flight_instance")).isZero();
     assertThat(count("booking")).isZero();
     mvc.perform(post("/api/v1/bookings").contentType(MediaType.APPLICATION_JSON).content(body))
@@ -106,7 +123,8 @@ class HttpContractsIT extends IntegrationSupport {
     mvc.perform(
             post("/api/v1/bookings/{reference}/cancel", reference)
                 .accept(MediaType.APPLICATION_XML))
-        .andExpect(status().isNotAcceptable());
+        .andExpect(status().isNotAcceptable())
+        .andExpect(jsonPath("$.errorCode").value("NOT_ACCEPTABLE"));
     assertThat(jdbc.sql("SELECT status FROM booking").query(String.class).single())
         .isEqualTo("CONFIRMED");
     assertThat(jdbc.sql("SELECT status FROM booking_seat").query(String.class).single())

@@ -25,9 +25,13 @@ public class FlightDatePolicy {
     }
   }
 
-  public void requireBeforeDeparture(LocalDate date, LocalTime departureTime) {
+  public boolean hasDeparted(LocalDate date, LocalTime departureTime) {
     Instant departure = date.atTime(departureTime).toInstant(ZoneOffset.UTC);
-    if (!clock.instant().isBefore(departure)) {
+    return !clock.instant().isBefore(departure);
+  }
+
+  public void requireBeforeDeparture(LocalDate date, LocalTime departureTime) {
+    if (hasDeparted(date, departureTime)) {
       throw new BusinessException(ErrorCode.FLIGHT_DEPARTED, "Flight has already departed");
     }
   }

@@ -279,8 +279,9 @@ This is conventional layered design, not a persistence-independent application
 core: service implementations intentionally depend on JPA. Explicit types/imports
 and focused methods are enforced.
 
-Use JPA for standard persistence, an application-model projection for search, explicit entity
-graphs for required associations and one PostgreSQL native instance upsert.
+Use JPA for standard persistence, application-model projections for search and the
+cancellation lookup, one explicit entity graph for flight resolution and one PostgreSQL
+native instance upsert.
 Flyway owns schema evolution. IDENTITY-generated seat inserts are ordered
 individual statements: `saveAllAndFlush` is **not** claimed to batch them.
 
@@ -318,7 +319,8 @@ an explicit schedule identity assumption. Reads need no pre-existing instance ro
 ### Schedules are matched
 
 Validate the rolling UTC date window, derive ISO weekday and match source,
-destination and operation day in one repository query. No extra sorting/filter API.
+destination and operation day in one repository query. Flights whose UTC departure
+has been reached are then dropped in the service. No extra sorting/filter API.
 
 ### Flight instances are generated
 
@@ -360,7 +362,8 @@ No nested connection acquisition or catch-and-continue in an aborted transaction
 
 Generate a standard UUID, insert the booking, then insert every selected allocation
 in deterministic label order. Recheck date/departure policy inside the write unit.
-Commit all or roll back all; return the six-field response only after commit.
+Commit all or roll back all; return the six-field response only after commit, with
+seats in request order.
 A failed booking may leave an empty reusable instance, never a partial reservation.
 
 ### Concurrency handling
@@ -375,12 +378,14 @@ temporary failures explicitly return 503 rather than a false successful booking.
 
 ### Booking lookup
 
-Resolve the UUID with its flight instance/schedule. Missing references return 404.
+Resolve the UUID to one joined projection of booking, flight date and departure time;
+no entity is loaded. Missing references return 404.
 Reject repeated cancellation and cancellation at/after UTC departure with 409.
 
 ### Seat release
 
-Read assigned labels, then bulk-change allocations from `BOOKED` to `RELEASED`.
+Read assigned labels in natural row order (`2A` before `10A`), then bulk-change
+allocations from `BOOKED` to `RELEASED`.
 Retain historical rows. Commit removes the active-index ownership so rebooking is
 possible and search/seat-map availability reflects the release.
 
@@ -414,16 +419,17 @@ reply, a user decision, or an engineering choice recorded in the spec.
   included); one immutable schedule per flight number; UUID booking references (brief
   151 allows PNR or UUID); a booking is refused once the UTC departure instant is reached.
 - **User decisions:** a repeated cancellation, or one at or after departure, returns 409
-  (spec 53-55); a flight that departed earlier today may still appear in search
-  (2026-10-21, execution log).
+  (spec 53-55); search omits a flight once its UTC departure is reached (spec 134,
+  2026-10-22, replacing the 2026-10-21 policy that still listed it).
 
-Search rejects a date outside the 365-day window with 422 and otherwise matches route
-and operating weekday; it does not apply the departure cutoff. A flight that departed
-earlier today therefore still appears in that day's results, even from a fresh query.
-This is the accepted search policy above, not read staleness. Booking such a flight
-returns 409 `FLIGHT_DEPARTED`, so the user learns of the change at booking time, as
-reply 358-361 requires. Departure is checked when the request is validated and again at
-the start of the booking write, not at commit, so a request that starts seconds before
+Search rejects a date outside the 365-day window with 422, matches route and operating
+weekday in one query, and then drops flights whose UTC departure instant has been
+reached, using the same rule as booking. A flight that departed earlier today is
+therefore absent from that day's results; it is not hidden on other dates, and its seat
+map stays readable. Search is still a snapshot: if the flight departs between search and
+booking, booking returns 409 `FLIGHT_DEPARTED`, so the user learns of the change at
+booking time, as reply 358-361 requires. Departure is checked when the request is
+validated and again at the start of the booking write, not at commit, so a request that starts seconds before
 departure can still commit.
 
 There are no seat holds, safe write retries, idempotency keys or booking lookup API.

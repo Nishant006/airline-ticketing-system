@@ -23,7 +23,7 @@ public interface FlightScheduleRepository extends JpaRepository<FlightSchedule, 
       """
                     select new com.airline.reservation.model.FlightAvailability(
                         s.flightNumber, s.departureTime, s.arrivalTime,
-                        a.rowsCount * length(a.seatLetters) - count(bs.id))
+                        a.rowsCount * length(a.seatLetters) - count(bs.seatLabel))
                     from FlightSchedule s join s.aircraft a join s.daysOfOperation d
                     left join FlightInstance fi on fi.schedule = s and fi.flightDate = :date
                     left join BookingSeat bs on bs.flightInstance = fi

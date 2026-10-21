@@ -226,30 +226,20 @@ See [the decision log](../features/ATS-1/decision-log.md) for alternatives.
 
 ## Operational limits and scale considerations
 
-Pool acquisition timeout is not an end-to-end search deadline. Measure full HTTP latency
-with 500 schedules and documented data/load. Query-count regressions and EXPLAIN help
-diagnose performance; small-table sequential scans are legitimate.
+Reads and writes use separate connection pools on the same primary. When the small read
+pool stays saturated for 250 ms, search and seat maps get 503 with `Retry-After: 1`, so
+reads never starve booking; statement and lock deadlines cap every read. A booking waits
+longer for a write connection, because its stability matters more than its speed. These
+are database waits, not an end-to-end HTTP deadline. Values are in the
+[README](../README.md#database-capacity-and-read-deadlines) and reasons in
+[D7](../features/ATS-1/decision-log.md#d7-read-protection-and-connection-pools).
 
-Spring's `LazyConnectionDataSourceProxy` routes read-only search/maps to a dedicated
-five-connection pool on the same primary: 250 ms acquisition, 500 ms PostgreSQL statement
-timeout and 250 ms lock timeout. Ordinary transactions retain a separate ten-connection
-pool and 20 s acquisition. Booking lookup/conflict enrichment use write capacity;
-lookup within a read-only seat-map transaction joins that read transaction. Saturated
-reads return explicit 503 rather than starving booking connections. Physical-pool
-exhaustion and SQL/lock cancellation/recovery are exercised by `ReadIsolationIT`.
-The combined maximum is 15 per replica, 45 for three against the local 100 limit.
-Database budgets do not bound HTTP queueing, network or cold connection establishment.
-
-Total replica pool demand must fit PostgreSQL's connection budget. A pooler, replicas,
-cache or queue is a future option only when measurements justify it, not implemented
-infrastructure. Live availability is snapshot-consistent, not a seat hold.
-Readiness includes database connectivity, while liveness does not depend on the database.
-
-Search projects four fields in one SQL statement without hydrating entities. An explicit
-entity graph fetches the aircraft needed for flight resolution; a seat map then reads
-active labels, with no per-seat query loop. IDENTITY-based seat saves execute individual
-inserts in deterministic label order; `saveAllAndFlush` is not asserted to be batching.
-Booking latency may vary under contention as allowed by the clarified requirements.
+Replica count × 15 connections must fit PostgreSQL's connection limit. A pooler, read
+replica, cache or queue is a future option only when measurements justify it
+([D9](../features/ATS-1/decision-log.md#d9-on-demand-scaling)). Live availability is
+snapshot-consistent, not a seat hold. Readiness includes database connectivity; liveness
+does not. No request runs a read query per result or per seat
+([query costs](../lld/design.md#query-audit-and-measured-performance)).
 
 ## Evidence and deployment boundaries
 
@@ -266,17 +256,13 @@ booking returns an explicit 503 with an unconfirmed-outcome warning. Health deta
 are not exposed to unauthenticated callers. Correlation identifiers are validated,
 echoed and cleared from MDC after requests; passenger names and payloads are not logged.
 
-Search was measured through real HTTP with 500 schedules and 600,000 synthetic
-active/historical allocations, both read-only and in a 25:1 search-to-booking mix at
-16, 64 and 192 closed-loop clients. No recorded search measurement exceeded one second,
-every disjoint booking succeeded, and stress-phase overload appeared only as explicit
-503s. Each phase lasts seconds, so this is not a sustained capacity certification, and
-the mixed-load test fails intermittently with a connect-time reset. The
-[NFR evidence ledger](../tests/nfr-evidence.md) holds every run, number and
-condition; see [LLD](../lld/design.md#query-audit-and-measured-performance) for the
-dataset, SQL plan and query costs. No lazy-loading API is presently necessary; if scale
-changes, bounded pagination/lazy loading is a measured follow-up, not an existing
-endpoint or unlimited-throughput claim.
+Real-HTTP runs with 500 schedules and 600,000 seat allocations, alone and in a 25:1 mix
+at up to 192 clients, recorded no search over one second and no failed disjoint booking;
+overload appeared only as explicit 503s. The runs are short, not a capacity certification,
+and the mixed-load test fails intermittently with a connect-time reset. Every run and
+condition is in the [NFR evidence ledger](../tests/nfr-evidence.md); dataset, SQL plan and
+query costs are in the [LLD](../lld/design.md#query-audit-and-measured-performance). No
+lazy-loading API is needed yet; bounded pagination is a measured follow-up if scale changes.
 
 The backend contains no authentication. Deployment must restrict the administrative
 route at a trusted gateway; UUID references are identifiers, not an authorization

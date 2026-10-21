@@ -35,18 +35,14 @@ public class BookingTransactionServiceImpl implements BookingTransactionService 
       OperatingFlight flight, long instanceId, CreateBookingCommand request) {
     flightDatePolicy.requireInWindow(request.flightDate());
     flightDatePolicy.requireBeforeDeparture(request.flightDate(), flight.departureTime());
-    List<CreateBookingCommand.Passenger> ordered =
-        request.passengers().stream()
-            .sorted(Comparator.comparing(CreateBookingCommand.Passenger::seat))
-            .toList();
     UUID reference = UUID.randomUUID();
-    persist(reference, instanceId, ordered);
+    persist(reference, instanceId, request.passengers());
     return new BookingResult(
         reference,
         flight.flightNumber(),
         request.flightDate(),
-        ordered.size(),
-        ordered.stream().map(CreateBookingCommand.Passenger::seat).toList(),
+        request.passengers().size(),
+        request.passengers().stream().map(CreateBookingCommand.Passenger::seat).toList(),
         BookingStatus.CONFIRMED);
   }
 
@@ -56,12 +52,15 @@ public class BookingTransactionServiceImpl implements BookingTransactionService 
       Booking booking =
           bookingRepository.save(
               new Booking(reference, flightInstanceRepository.getReferenceById(instanceId)));
+      // One global insert order: overlapping bookings wait instead of deadlocking.
       bookingSeatRepository.saveAllAndFlush(
           passengers.stream()
+              .sorted(Comparator.comparing(CreateBookingCommand.Passenger::seat))
               .map(passenger -> new BookingSeat(booking, passenger.seat(), passenger.name()))
               .toList());
     } catch (DataIntegrityViolationException exception) {
-      if (PersistenceConstraints.isUniqueViolationOf(exception, "uq_booking_seat_active")) {
+      if (PersistenceConstraints.isUniqueViolationOf(
+          exception, PersistenceConstraints.UQ_BOOKING_SEAT_ACTIVE)) {
         throw new SeatConflictException(exception);
       }
       throw exception;

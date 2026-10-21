@@ -33,7 +33,9 @@ public class FlightServiceImpl implements FlightService {
       throw new BusinessException(
           ErrorCode.SAME_ORIGIN_DESTINATION, "Origin and destination must differ");
     }
-    return flightScheduleRepository.search(origin, destination, date, date.getDayOfWeek());
+    return flightScheduleRepository.search(origin, destination, date, date.getDayOfWeek()).stream()
+        .filter(flight -> !flightDatePolicy.hasDeparted(date, flight.departureTime()))
+        .toList();
   }
 
   @Override

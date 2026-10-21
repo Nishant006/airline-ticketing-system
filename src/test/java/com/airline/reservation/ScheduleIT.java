@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.airline.reservation.exception.BusinessException;
 import com.airline.reservation.exception.ErrorCode;
 import com.airline.reservation.model.CreateScheduleCommand;
+import jakarta.validation.ConstraintViolationException;
 import java.time.DayOfWeek;
 import java.time.LocalTime;
 import java.util.List;
@@ -79,6 +80,32 @@ class ScheduleIT extends IntegrationSupport {
                 .content(REQUEST.replace("\"LHR\"", "\"DXB\"")))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.errorCode").value("SAME_ORIGIN_DESTINATION"));
+    assertThat(count("flight_schedule")).isZero();
+  }
+
+  @Test
+  void serviceContractRejectsInvalidCommandsCalledWithoutHttp() {
+    assertThatThrownBy(() -> schedules.create(null))
+        .isInstanceOf(ConstraintViolationException.class);
+    assertThatThrownBy(
+            () ->
+                schedules.create(
+                    new CreateScheduleCommand(
+                        "xy101",
+                        "DXB",
+                        "LHR",
+                        LocalTime.of(9, 30),
+                        LocalTime.of(13, 45),
+                        "A320-001",
+                        List.of(DayOfWeek.MONDAY))))
+        .isInstanceOfSatisfying(
+            ConstraintViolationException.class,
+            exception ->
+                assertThat(exception.getConstraintViolations())
+                    .singleElement()
+                    .extracting(violation -> violation.getPropertyPath().toString())
+                    .asString()
+                    .endsWith(".flightNumber"));
     assertThat(count("flight_schedule")).isZero();
   }
 

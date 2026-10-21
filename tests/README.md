@@ -44,7 +44,7 @@ added to these files or backend requests.
 | 05 Operating weekdays and rolling UTC window | Nonoperating dates and half-open `[today, today+365)` boundaries, including last-day booking/cancellation |
 | 06 Sold-out and full-group cancellation | Actual ATR 72 layout, all 72 seats booked atomically, searchable at zero availability, full release |
 | 07 Concurrent public HTTP flows | 16 same-seat booking contenders and eight same-reference cancellation contenders, exactly one winner per race |
-| 08 Real UTC departure cutoff | Book before departure; reject new booking and cancellation at/after departure; retain original ownership |
+| 08 Real UTC departure cutoff | Book before departure; reject new booking and cancellation at/after departure; search omits the departed flight; retain original ownership |
 
 The final folder chooses a real server UTC minute 15-75 seconds ahead, then
 polls liveness with a bounded delay until the server reaches that time. Run it

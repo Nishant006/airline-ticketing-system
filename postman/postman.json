@@ -5064,7 +5064,7 @@
           "name": "06 Today is the first allowed search date",
           "request": {
             "description": {
-              "content": "",
+              "content": "Today is inside the half-open window. Departed flights are hidden, so whether the 14:00 UTC main flight is listed depends on the current UTC time; folder 08 asserts the hiding at a real departure.",
               "type": "text/plain"
             },
             "url": {
@@ -5112,7 +5112,7 @@
                 "id": "4a9fcdfd-4e14-4bd6-908f-ddf975afdea7",
                 "type": "text/javascript",
                 "exec": [
-                  "pm.variables.set(\"checks\", \"{\\\"status\\\":200,\\\"kind\\\":\\\"search\\\",\\\"flight\\\":\\\"mainFlight\\\",\\\"available\\\":180,\\\"absent\\\":false}\");"
+                  "pm.variables.set(\"checks\", \"{\\\"status\\\":200,\\\"kind\\\":\\\"search\\\"}\");"
                 ]
               }
             }
@@ -6855,7 +6855,7 @@
       "id": "0e925e1f-c982-4249-83e9-6f2b43076596",
       "name": "08 Real UTC departure cutoff",
       "description": {
-        "content": "Runner/Newman only. Uses the server Date header to choose a real whole-minute UTC departure 15-75 seconds ahead, books before it, then bounded liveness polling waits until departure. Cancellation and new booking must return FLIGHT_DEPARTED; original ownership remains. No test clock/backdoor. The departed confirmed reservation intentionally remains as historical test data; public API cannot cancel it after departure.",
+        "content": "Runner/Newman only. Uses the server Date header to choose a real whole-minute UTC departure 15-75 seconds ahead, books before it, then bounded liveness polling waits until departure. Cancellation and new booking must return FLIGHT_DEPARTED; original ownership remains (seat map) and search no longer lists the departed flight. No test clock/backdoor. The departed confirmed reservation intentionally remains as historical test data; public API cannot cancel it after departure.",
         "type": "text/plain"
       },
       "item": [
@@ -7271,7 +7271,7 @@
         },
         {
           "id": "5c7dcd19-0c75-4fec-9a0d-96fb0e7ce242",
-          "name": "08 Search still reflects retained departed reservation",
+          "name": "08 Search hides the departed flight",
           "request": {
             "description": {
               "content": "",
@@ -7322,7 +7322,7 @@
                 "id": "00c570f2-cce9-4077-b70d-2a1a49552476",
                 "type": "text/javascript",
                 "exec": [
-                  "pm.variables.set(\"checks\", \"{\\\"status\\\":200,\\\"kind\\\":\\\"search\\\",\\\"flight\\\":\\\"cutoffFlight\\\",\\\"available\\\":179,\\\"absent\\\":false}\");"
+                  "pm.variables.set(\"checks\", \"{\\\"status\\\":200,\\\"kind\\\":\\\"search\\\",\\\"flight\\\":\\\"cutoffFlight\\\",\\\"absent\\\":true}\");"
                 ]
               }
             }
@@ -7465,7 +7465,8 @@
           "      pm.expect(actual.flightNumber).to.equal(value(checks.flight));",
           "      pm.expect(actual.flightDate).to.equal(value(checks.date));",
           "      pm.expect(actual.passengerCount).to.equal(seats.length);",
-          "      pm.expect(actual.assignedSeats).to.deep.equal(seats.slice().sort());",
+          "      const naturalOrder = (a, b) => a.localeCompare(b, undefined, { numeric: true });",
+          "      pm.expect(actual.assignedSeats).to.deep.equal(checks.state === \"CANCELLED\" ? seats.slice().sort(naturalOrder) : seats);",
           "      pm.expect(actual.bookingStatus).to.equal(checks.state);",
           "      if (checks.reference) pm.expect(actual.bookingReference).to.equal(value(checks.reference));",
           "      if (checks.store) pm.collectionVariables.set(checks.store, actual.bookingReference);",

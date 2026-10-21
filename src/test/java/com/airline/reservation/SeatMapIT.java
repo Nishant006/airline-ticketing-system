@@ -9,6 +9,7 @@ import com.airline.reservation.model.CreateScheduleCommand;
 import com.airline.reservation.model.SeatMap;
 import com.airline.reservation.service.FlightService;
 import java.time.DayOfWeek;
+import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -47,6 +48,21 @@ class SeatMapIT extends IntegrationSupport {
   }
 
   @Test
+  void windowBoundariesAreEnforcedOnSeatMap() throws Exception {
+    schedule("XY101", "A320-001");
+    for (LocalDate date : List.of(TODAY, TODAY.plusDays(364))) {
+      mvc.perform(get("/api/v1/flights/XY101/seat-map").param("date", date.toString()))
+          .andExpect(status().isOk());
+    }
+    for (LocalDate date : List.of(TODAY.minusDays(1), TODAY.plusDays(365))) {
+      mvc.perform(get("/api/v1/flights/XY101/seat-map").param("date", date.toString()))
+          .andExpect(status().isUnprocessableContent())
+          .andExpect(jsonPath("$.errorCode").value("DATE_OUT_OF_WINDOW"));
+    }
+    assertThat(count("flight_instance")).isZero();
+  }
+
+  @Test
   void absentOrNonoperatingFlightsReturn404() throws Exception {
     schedules.create(
         new CreateScheduleCommand(
@@ -58,8 +74,10 @@ class SeatMapIT extends IntegrationSupport {
             "AT72-001",
             List.of(DayOfWeek.MONDAY)));
     mvc.perform(get("/api/v1/flights/XY101/seat-map").param("date", TOMORROW.toString()))
-        .andExpect(status().isNotFound());
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.errorCode").value("FLIGHT_NOT_FOUND"));
     mvc.perform(get("/api/v1/flights/XY999/seat-map").param("date", TODAY.toString()))
-        .andExpect(status().isNotFound());
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.errorCode").value("FLIGHT_NOT_FOUND"));
   }
 }

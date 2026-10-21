@@ -112,4 +112,41 @@ class FlightSearchIT extends IntegrationSupport {
     assertThat(statistics().getPrepareStatementCount()).isEqualTo(1);
     assertThat(statistics().getEntityLoadCount()).isZero();
   }
+
+  @Test
+  void departedFlightsAreHiddenOnlyFromTodaysSearch() throws Exception {
+    for (String[] flight :
+        List.of(
+            new String[] {"XY201", "07:59"},
+            new String[] {"XY202", "08:00"},
+            new String[] {"XY203", "08:01"})) {
+      schedules.create(
+          new CreateScheduleCommand(
+              flight[0],
+              "DXB",
+              "LHR",
+              LocalTime.parse(flight[1]),
+              LocalTime.of(12, 0),
+              "A320-001",
+              List.of(DayOfWeek.values())));
+    }
+    mvc.perform(
+            get("/api/v1/flights")
+                .param("originCode", "DXB")
+                .param("destinationCode", "LHR")
+                .param("date", TODAY.toString()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.length()").value(1))
+        .andExpect(jsonPath("$[0].flightNumber").value("XY203"));
+    mvc.perform(get("/api/v1/flights/XY201/seat-map").param("date", TODAY.toString()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.seats.length()").value(180));
+    mvc.perform(
+            get("/api/v1/flights")
+                .param("originCode", "DXB")
+                .param("destinationCode", "LHR")
+                .param("date", TOMORROW.toString()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.length()").value(3));
+  }
 }

@@ -131,12 +131,12 @@ headers return 406 without creating schedules/bookings or cancelling reservation
 
 Search returns `flightNumber`, `departureTime`, `arrivalTime`, `availableSeats` (count).
 An empty match returns `200 []`; a sold-out flight remains in results with count zero.
-Search does not add a departed-flight filter; bookability is enforced on the write path.
+Search omits a flight once its UTC departure is reached (user decision, 2026-10-22).
 
 Booking supplies `flightNumber`, `flightDate`, and
 `passengers: [{"name": "Example", "seat": "12A"}]`.
 Response fields are `bookingReference`, `flightNumber`, `flightDate`, `passengerCount`,
-`assignedSeats`, `bookingStatus`. Seat maps never expose passenger names.
+`assignedSeats`, `bookingStatus`. Seat maps never expose passenger names. A booking lists seats in request order; a cancellation lists them in natural row order, `2A` before `10A` (user decision, 2026-10-22).
 There is no extra GET endpoint behind an invented `Location` URL.
 
 Errors use RFC 9457 `application/problem+json` and a stable `errorCode`.

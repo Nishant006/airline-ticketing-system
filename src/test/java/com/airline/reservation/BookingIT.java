@@ -12,6 +12,7 @@ import com.airline.reservation.model.CreateBookingCommand;
 import com.airline.reservation.model.CreateBookingCommand.Passenger;
 import com.airline.reservation.model.CreateScheduleCommand;
 import com.airline.reservation.service.BookingService;
+import jakarta.validation.ConstraintViolationException;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -50,7 +51,8 @@ class BookingIT extends IntegrationSupport {
         .andExpect(jsonPath("$.flightNumber").value("XY101"))
         .andExpect(jsonPath("$.flightDate").value("2027-03-02"))
         .andExpect(jsonPath("$.passengerCount").value(2))
-        .andExpect(jsonPath("$.assignedSeats[0]").value("2A"))
+        .andExpect(jsonPath("$.assignedSeats[0]").value("2B"))
+        .andExpect(jsonPath("$.assignedSeats[1]").value("2A"))
         .andExpect(jsonPath("$.bookingStatus").value("CONFIRMED"));
     mvc.perform(get("/api/v1/flights/XY101/seat-map").param("date", TOMORROW.toString()))
         .andExpect(status().isOk())
@@ -91,7 +93,8 @@ class BookingIT extends IntegrationSupport {
   @Test
   void actualSeatWritesUseDeterministicLabelOrder() {
     schedule("XY101", "A320-001");
-    bookings.create(command("3C", "2A", "10A"));
+    assertThat(bookings.create(command("3C", "2A", "10A")).assignedSeats())
+        .containsExactly("3C", "2A", "10A");
     assertThat(
             jdbc.sql("SELECT seat_label FROM booking_seat ORDER BY id").query(String.class).list())
         .containsExactly("10A", "2A", "3C");
@@ -127,6 +130,34 @@ class BookingIT extends IntegrationSupport {
     assertThat(count("booking")).isZero();
     assertThatThrownBy(() -> bookings.create(command("1A", "1A")))
         .isInstanceOf(BusinessException.class);
+  }
+
+  @Test
+  void nonOperatingDateOrUnknownFlightIsNotFoundWithoutMaterializing() throws Exception {
+    schedules.create(
+        new CreateScheduleCommand(
+            "XY101",
+            "DXB",
+            "LHR",
+            LocalTime.of(9, 30),
+            LocalTime.of(13, 45),
+            "A320-001",
+            List.of(DayOfWeek.MONDAY)));
+    for (String flightNumber : List.of("XY101", "XY999")) {
+      mvc.perform(
+              post("/api/v1/bookings")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      """
+                      {"flightNumber":"%s","flightDate":"2027-03-02",
+                       "passengers":[{"name":"Alpha","seat":"1A"}]}
+                      """
+                          .formatted(flightNumber)))
+          .andExpect(status().isNotFound())
+          .andExpect(jsonPath("$.errorCode").value("FLIGHT_NOT_FOUND"));
+    }
+    assertThat(count("flight_instance")).isZero();
+    assertThat(count("booking")).isZero();
   }
 
   @Test
@@ -215,6 +246,24 @@ class BookingIT extends IntegrationSupport {
     assertThat(count("booking")).isZero();
     assertThat(count("booking_seat")).isZero();
     assertThat(bookings.create(command("1A")).assignedSeats()).containsExactly("1A");
+  }
+
+  @Test
+  void serviceContractRejectsInvalidCommandsBeforeMaterializing() {
+    schedule("XY101", "A320-001");
+    assertThatThrownBy(() -> bookings.create(null))
+        .isInstanceOf(ConstraintViolationException.class);
+    assertThatThrownBy(() -> bookings.create(command("01A")))
+        .isInstanceOfSatisfying(
+            ConstraintViolationException.class,
+            exception ->
+                assertThat(exception.getConstraintViolations())
+                    .singleElement()
+                    .extracting(violation -> violation.getPropertyPath().toString())
+                    .asString()
+                    .endsWith(".seat"));
+    assertThat(count("flight_instance")).isZero();
+    assertThat(count("booking")).isZero();
   }
 
   private CreateBookingCommand command(String... seats) {

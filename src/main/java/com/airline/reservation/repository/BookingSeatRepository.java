@@ -17,8 +17,12 @@ public interface BookingSeatRepository extends JpaRepository<BookingSeat, Long> 
                     """)
   Set<String> findBookedSeats(long scheduleId, LocalDate date);
 
+  // Labels are a 1-2 digit row plus one letter, so shorter labels sort first: 2A before 10A.
   @Query(
-      "select s.seatLabel from BookingSeat s where s.booking.id = :bookingId order by s.seatLabel")
+      """
+                    select s.seatLabel from BookingSeat s where s.booking.id = :bookingId
+                    order by length(s.seatLabel), s.seatLabel
+                    """)
   List<String> findAssignedSeats(long bookingId);
 
   @Modifying

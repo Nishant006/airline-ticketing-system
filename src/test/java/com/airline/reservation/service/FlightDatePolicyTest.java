@@ -1,5 +1,6 @@
 package com.airline.reservation.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
@@ -38,6 +39,9 @@ class FlightDatePolicyTest {
         .isInstanceOf(BusinessException.class);
     assertThatThrownBy(() -> policy.requireBeforeDeparture(today, LocalTime.of(7, 59)))
         .isInstanceOf(BusinessException.class);
+    assertThat(policy.hasDeparted(today, LocalTime.of(8, 0))).isTrue();
+    assertThat(policy.hasDeparted(today, LocalTime.of(8, 1))).isFalse();
+    assertThat(policy.hasDeparted(today.plusDays(1), LocalTime.of(7, 0))).isFalse();
   }
 
   @Test

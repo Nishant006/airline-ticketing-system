@@ -58,7 +58,9 @@ IDENTITY-generated seat IDs imply individual ordered inserts, not JDBC batching.
 `reWriteBatchedInserts=true` in the JDBC URL therefore has no effect today; it only
 matters after a move to sequence IDs. Seats are inserted in lexical label order
 (`Comparator.comparing(seat)`, so `10A` precedes `2A`). Deadlock reduction only needs
-a deterministic total order, not a numeric one.
+a deterministic total order, not a numeric one. Responses do not expose that order: a
+booking returns seats in request order, and a cancellation returns them in natural row
+order (`2A` before `10A`).
 
 ### Class diagrams
 
@@ -161,6 +163,7 @@ classDiagram
         -Clock clock
         -BookingProperties properties
         +requireInWindow(LocalDate) void
+        +hasDeparted(LocalDate, LocalTime) boolean
         +requireBeforeDeparture(LocalDate, LocalTime) void
     }
     FlightServiceImpl --> FlightLookupService
@@ -187,7 +190,7 @@ coordinates the services above):
 | `FlightLookupServiceImpl` | `FlightScheduleRepository.findOperating`, `BookingSeatRepository.findBookedSeats` |
 | `FlightInstanceServiceImpl` | `FlightInstanceRepository.findId`, `insertIfAbsent` |
 | `BookingTransactionServiceImpl` | `FlightInstanceRepository.getReferenceById`, `BookingRepository.save`, `BookingSeatRepository.saveAllAndFlush` |
-| `CancellationServiceImpl` | `BookingRepository.findByReference`, `cancelConfirmed`; `BookingSeatRepository.findAssignedSeats`, `releaseBookedSeats` |
+| `CancellationServiceImpl` | `BookingRepository.findDetailsByReference`, `cancelConfirmed`; `BookingSeatRepository.findAssignedSeats`, `releaseBookedSeats` |
 
 **LLD-2. Repositories and JPA entities.** Every association is a unidirectional, lazy
 `@ManyToOne`; the only entity collection is the schedule's weekday set. `BookingStatus`
@@ -215,7 +218,7 @@ classDiagram
     }
     class BookingRepository {
         <<JpaRepository>>
-        +findByReference(UUID) Optional~Booking~
+        +findDetailsByReference(UUID) Optional~BookingDetails~
         +cancelConfirmed(long, Instant) int
     }
     class BookingSeatRepository {
@@ -406,7 +409,7 @@ classDiagram
     SeatMapResponse ..> SeatMap : from()
     OperatingFlight *-- SeatLayout
     note for SeatMap "Seat = label + status, AVAILABLE or BOOKED"
-    note for BookingDetails "Internal to CancellationServiceImpl"
+    note for BookingDetails "Projected by BookingRepository<br/>for CancellationServiceImpl only"
     note for OperatingFlight "Returned by resolve()<br/>of FlightLookupService"
 ```
 
@@ -525,7 +528,8 @@ weekday rows in one transaction; `uq_schedule_flight_number` maps to 409.
 
 Search derives ISO weekday, filters route/day and LEFT JOINs instances/active seats.
 Capacity minus active count returns availability, including zero. The active predicate
-belongs in the join. Seat map expands configured labels and marks the active set.
+belongs in the join. `FlightDatePolicy.hasDeparted` then drops flights whose UTC
+departure has been reached. Seat map expands configured labels and marks the active set.
 
 Booking validates first, obtains the unique instance ID, inserts a UUID booking and its
 ordered allocations, then commits atomically. The partial unique index arbitrates
@@ -599,6 +603,9 @@ sequenceDiagram
     FS->>FR: search(origin, destination, date, weekday)
     Note right of FR: One JPQL aggregate. Capacity minus BOOKED seats,<br/>LEFT JOIN instance and BOOKED seats,<br/>ordered by departure time and flight number.
     FR-->>FS: FlightAvailability list, empty when nothing operates
+    FS->>P: hasDeparted(date, departureTime) for each row
+    Note right of FS: Rows whose UTC departure is reached are dropped,<br/>the same boundary that booking enforces.
+    FS-->>FC: FlightAvailability list
     FC-->>Customer: 200 FlightSearchResponse list
     Customer->>FC: GET /api/v1/flights/{flightNumber}/seat-map?date=..
     FC->>FS: seatMap(flightNumber, date)
@@ -640,11 +647,11 @@ sequenceDiagram
     FI-->>BS: instanceId, committed
     BS->>BT: create(flight, instanceId, command), transaction 3
     BT->>P: requireInWindow and requireBeforeDeparture again
-    BT->>BT: sort passengers by seat label, reference = UUID.randomUUID()
+    BT->>BT: reference = UUID.randomUUID()
     BT->>DB: INSERT booking CONFIRMED
-    BT->>DB: INSERT booking_seat BOOKED, one row per seat in sorted order, flush
+    BT->>DB: INSERT booking_seat BOOKED, one row per seat sorted by label, flush
     alt every seat row inserted
-        BT-->>BS: BookingResult CONFIRMED, transaction 3 commits
+        BT-->>BS: BookingResult CONFIRMED, seats in request order, transaction 3 commits
         BS-->>BC: BookingResult, log booking_confirmed
         BC-->>Customer: 201 BookingResponse with bookingReference
     else uq_booking_seat_active violated
@@ -672,14 +679,14 @@ sequenceDiagram
     participant SR as BookingSeatRepository
     Customer->>BC: POST /api/v1/bookings/{bookingReference}/cancel
     BC->>CS: cancel(bookingReference)
-    CS->>BR: findByReference(reference), instance and schedule fetched
-    BR-->>CS: Booking, else 404 BOOKING_NOT_FOUND
+    CS->>BR: findDetailsByReference(reference), one joined projection
+    BR-->>CS: BookingDetails, else 404 BOOKING_NOT_FOUND
     opt status is already CANCELLED
         CS-->>BC: BusinessException ALREADY_CANCELLED, 409
     end
     CS->>P: requireBeforeDeparture(flightDate, departureTime), else 409 FLIGHT_DEPARTED
     CS->>SR: findAssignedSeats(bookingId)
-    SR-->>CS: seat labels in label order
+    SR-->>CS: seat labels in natural order, 2A before 10A
     CS->>BR: cancelConfirmed(bookingId, clock.instant())
     Note right of BR: UPDATE booking to CANCELLED, sets cancelledAt,<br/>only WHERE status = CONFIRMED
     opt updated row count is not 1, a concurrent cancel won
@@ -761,19 +768,13 @@ EXPLAIN plan for the clarified latency target.
 
 ## Query audit and measured performance
 
-Host, runtime and pool conditions are in the evidence ledger
-([§2](../tests/nfr-evidence.md#2-common-environment)). Dataset:
-500 daily schedules (100 matching the searched route), 30 dates each, 15,000 instances,
-30,000 bookings, 300,000 active and 300,000 released allocations. Allocation volume
-is a disclosed synthetic assumption, not derived from DAU.
-
-After 10 warmups, `SearchPerformanceIT` sends 100 sequential HTTP searches and then
-200 at eight workers. Every search must return 200 with all 100 results in under one
-second, execute one SQL statement and hydrate zero entities; every recorded run met
-this. Per-run latency is in the
-[NFR evidence ledger](../tests/nfr-evidence.md#71-read-only-search-s9-milliseconds-all-responses-200).
-These local warm-cache, read-only measurements are not a production/mixed-workload or
-cold-cache guarantee.
+`SearchPerformanceIT` uses the shared fixture: 500 daily schedules, 100 on the searched
+route, and 600,000 seat allocations, a disclosed synthetic volume not derived from DAU
+([ledger §3](../tests/nfr-evidence.md#3-shared-performance-fixture-performancedataset)). After 10 warm-ups
+it sends 100 sequential and 200 concurrent real-HTTP searches; each must return 200 with
+all 100 results in under one second, one SQL statement and zero entity loads. Every recorded
+run met this ([§7.1](../tests/nfr-evidence.md#71-read-only-search-s9-milliseconds-all-responses-200)); local
+warm-cache numbers are not a production or cold-cache guarantee.
 
 `EXPLAIN (ANALYZE, BUFFERS)` of Hibernate's actual emitted query used
 `ix_schedule_route`, `uq_instance` and `uq_booking_seat_active` (execution time per run:
@@ -783,35 +784,25 @@ disabled sequential scans, duplicate index, cache or query rewrite was needed.
 `SearchPerformanceIT` reproduces the dataset and writes SQL, timings and full plan to
 `target/search-performance.txt`.
 
-`MixedLoadIT` shares `PerformanceDataset` rather than duplicating seed SQL. Each client
-performs three cycles of 25 searches then one disjoint single-seat booking over real HTTP.
-The same JVM hosts the application and client; PostgreSQL runs in Docker, with JaCoCo
-enabled and warm caches. Phases run 16, 64 and 192 clients. No recorded search response
-exceeded one second, and the 192-client phase may shed searches as explicit 503s. Per-run
-phase tables
-(including successful-only latency, booking latency and phase durations) are in the
-[NFR evidence ledger](../tests/nfr-evidence.md#72-mixed-251-load-s10-milliseconds).
-The test fails intermittently with a connect-time connection reset whose cause is not
-established ([§8](../tests/nfr-evidence.md#8-known-limitation-intermittent-mixedloadit-connection-reset)).
-A 503 is counted, never treated as a successful search. All 816 disjoint
-bookings own their intended seats; 64 same-seat contenders yield one 201/63x409 and
-the database has zero duplicate active allocations. `target/mixed-load.txt` contains
-the report. These short closed-loop phases do not establish sustained/open-loop
-production capacity, a cold-cache guarantee or a DAU-to-QPS conversion. The report is
-written only when every phase passes, so a failed run leaves no phase metrics.
-
-Current reports separate all-response (`searchAll`) and successful-only (`search200`)
-latencies. The local baseline and exploratory-stress acceptance rules are documented
-in [test guidance](../tests/README.md).
+`MixedLoadIT` reuses the fixture for an exact 25:1 closed-loop mix over real HTTP at 16, 64
+and 192 clients, then a 64-way race for one seat. No recorded search exceeded one second,
+stress phases shed load only as counted 503s, all 816 disjoint bookings own their seats and
+the race yields one 201 and 63 × 409 with no duplicate active seat. Conditions, acceptance
+rules and per-run tables are in the ledger ([S10](../tests/nfr-evidence.md#4-table-a-scenarios-conditions-and-acceptance-criteria),
+[§7.2](../tests/nfr-evidence.md#72-mixed-251-load-s10-milliseconds)) and [test guidance](../tests/README.md);
+the intermittent connect-time reset is in
+[§8](../tests/nfr-evidence.md#8-known-limitation-intermittent-mixedloadit-connection-reset). Short
+closed-loop phases do not establish sustained capacity or a DAU-to-QPS conversion.
 
 Current query costs: search is one aggregate statement; seat map is two statements
 (schedule/aircraft then active labels), with work proportional to emitted labels.
 Existing-instance resolution is one scalar lookup; first resolution adds an upsert and
 fresh lookup. Booking uses ordered individual inserts because IDs are generated with
 IDENTITY; `saveAllAndFlush` is not batching. No per-result or per-seat read query exists.
-Cancellation is four statements: fetched lookup, scalar labels, conditional booking
-update and bulk release. Schedule creation performs bounded reference lookups followed
-by one parent and at most seven weekday inserts; it does not load whole reference tables.
+Cancellation is four statements and loads no entity: projected lookup, scalar labels,
+conditional booking update and bulk release. Schedule creation performs bounded reference
+lookups followed by one parent and at most seven weekday inserts; it does not load whole
+reference tables.
 
 ## Modularity and scaling decisions
 
@@ -822,14 +813,11 @@ focused methods. Distinct request/response records and architecture checks guard
 boundaries. The writer's separate Spring proxy is required for rollback-before-
 conflict-read semantics; its interface expresses that capability, not generic CRUD.
 
-At the clarified scale, retain the present indexes and live reads. If measurements
-later show write round-trip costs dominate, consider pooled sequence IDs with verified
-Hibernate batching in a new migration; do not assume an ORM setting batches IDENTITY
-inserts. As historical data grows, measure active-index size, vacuum behavior and retention
-before introducing partitioning. Add bounded pagination/lazy loading only if measured
-search volume requires an agreed API change. Read/write isolation is implemented with
-an explicit connection budget; further pool increases require database-capacity evidence.
-A future cache requires an agreed staleness policy and must never arbitrate seat ownership.
+At the clarified scale, keep the present indexes and live reads. Revisit triggers for ID
+batching, pool sizes, caching and pagination are in [D13](../features/ATS-1/decision-log.md#d13-orm-fetching-and-writes),
+[D7](../features/ATS-1/decision-log.md#d7-read-protection-and-connection-pools), [D5](../features/ATS-1/decision-log.md#d5-availability-and-read-model)
+and [D20](../features/ATS-1/decision-log.md#d20-latency-acceptance); a cache must never arbitrate seat ownership. As
+history grows, measure active-index size, vacuum behaviour and retention before partitioning.
 
 Additional replicas can share the PostgreSQL invariant without process-local locks.
 This does not imply unlimited throughput: total pool demand, database I/O, index

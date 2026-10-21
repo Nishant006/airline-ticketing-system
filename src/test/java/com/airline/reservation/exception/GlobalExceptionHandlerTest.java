@@ -1,10 +1,12 @@
 package com.airline.reservation.exception;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.entry;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 import java.sql.SQLException;
 import java.time.Duration;
+import java.util.Set;
 import org.hibernate.exception.ConstraintViolationException;
 import org.hibernate.exception.GenericJDBCException;
 import org.junit.jupiter.api.Test;
@@ -49,6 +51,20 @@ class GlobalExceptionHandlerTest {
             "location="
                 + getClass().getName()
                 + ".unexpectedFailureDoesNotExposeExceptionContents:");
+    assertThat(output.getAll()).doesNotContain("SensitiveFixture");
+  }
+
+  @Test
+  void serviceContractViolationIs400WithoutEchoingTheViolation(CapturedOutput output) {
+    ResponseEntity<ProblemDetail> response =
+        handler.invalidMethodInput(
+            new jakarta.validation.ConstraintViolationException("SensitiveFixture", Set.of()));
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    assertThat(response.getBody().getProperties())
+        .containsOnly(entry("errorCode", "VALIDATION_FAILED"));
+    assertThat(response.getBody().getDetail()).isEqualTo("Invalid request fields");
+    assertThat(output.getAll())
+        .contains("request_rejected status=400 type=ConstraintViolationException");
     assertThat(output.getAll()).doesNotContain("SensitiveFixture");
   }
 

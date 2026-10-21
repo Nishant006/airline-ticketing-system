@@ -32,6 +32,7 @@ class CancellationIT extends IntegrationSupport {
     statistics().clear();
     BookingResult cancelled = cancellationService.cancel(booking.bookingReference());
     assertThat(statistics().getPrepareStatementCount()).isEqualTo(4);
+    assertThat(statistics().getEntityLoadCount()).isZero();
     assertThat(cancelled.bookingStatus()).isEqualTo(BookingStatus.CANCELLED);
     assertThat(cancelled.assignedSeats()).containsExactly("1A", "1B");
     assertThat(jdbc.sql("SELECT status FROM booking").query(String.class).single())
@@ -159,6 +160,23 @@ class CancellationIT extends IntegrationSupport {
                 .query(Integer.class)
                 .single())
         .isEqualTo(2);
+  }
+
+  @Test
+  void cancellationListsSeatsInNaturalRowOrder() {
+    schedule("XY101", "A320-001");
+    BookingResult booking =
+        bookingService.create(
+            new CreateBookingCommand(
+                "XY101",
+                TOMORROW,
+                List.of(
+                    new CreateBookingCommand.Passenger("Alpha", "3C"),
+                    new CreateBookingCommand.Passenger("Beta", "10A"),
+                    new CreateBookingCommand.Passenger("Gamma", "2A"))));
+    assertThat(booking.assignedSeats()).containsExactly("3C", "10A", "2A");
+    assertThat(cancellationService.cancel(booking.bookingReference()).assignedSeats())
+        .containsExactly("2A", "3C", "10A");
   }
 
   private BookingResult book(LocalDate date) {
