@@ -21,24 +21,42 @@ controls and additional listing/retrieval APIs.
 
 ## Overall architecture and components
 
+Diagrams in this document are Mermaid source; rendered copies are indexed in
+[diagrams/README.md](diagrams/README.md).
+
+**HLD-1. Components.** Arrows are synchronous in-process calls, except the database
+connections. Every exception reaches one handler that writes an RFC 9457 problem.
+
 ```mermaid
 flowchart LR
-    Admin[Trusted back office] --> API[Spring MVC API]
-    Customer[Customer] --> API
-    API --> Schedule[Schedule service]
-    API --> Flight[FlightService]
-    API --> Booking[BookingService]
-    API --> Cancel[CancellationService]
+    Admin["Back-office client<br/>(behind a trusted gateway)"] --> Filter
+    Customer[Customer client] --> Filter
+    Filter["RequestCorrelationFilter<br/>X-Correlation-ID, MDC"]
+    Filter --> SC["ScheduleController<br/>POST /api/v1/admin/<br/>flight-schedules"]
+    Filter --> FC["FlightController<br/>GET /api/v1/flights<br/>GET /api/v1/flights/<br/>{flightNumber}/seat-map"]
+    Filter --> BC["BookingController<br/>POST /api/v1/bookings<br/>POST /api/v1/bookings/<br/>{bookingReference}/cancel"]
+    SC --> Schedule[ScheduleService]
+    FC --> Flight[FlightService]
+    BC --> Booking[BookingService]
+    BC --> Cancel[CancellationService]
+    Flight --> Lookup[FlightLookupService]
+    Booking --> Lookup
     Booking --> Materializer[FlightInstanceService]
     Booking --> Writer[BookingTransactionService]
     Schedule --> Repositories[Flat Spring Data JPA repositories]
     Flight --> Repositories
+    Lookup --> Repositories
     Materializer --> Repositories
     Writer --> Repositories
     Cancel --> Repositories
-    Repositories --> Pools[Read 5 / write 10 connection routing]
-    Pools --> DB[(PostgreSQL)]
-    Flyway[Flyway migrations] --> DB
+    Repositories --> Router["LazyConnectionDataSourceProxy<br/>read-only transaction: read pool, max 5<br/>otherwise: write pool, max 10"]
+    Router --> DB[(PostgreSQL primary)]
+    Flyway["Flyway: V1 schema, V2 seed data<br/>(applied at application startup)"] --> DB
+    Handler["GlobalExceptionHandler<br/>RFC 9457 problem with errorCode"]
+    Filter -. invalid X-Correlation-ID .-> Handler
+    SC -. exceptions .-> Handler
+    FC -. exceptions .-> Handler
+    BC -. exceptions .-> Handler
 ```
 
 One Java 21 / Spring Boot deployable; PostgreSQL is its only external dependency.
@@ -61,6 +79,24 @@ no JVM-local seat locks, sessions, mutable seat caches, broker or leader-electio
 Admin authentication belongs to a trusted external boundary; this backend does not
 implement it or pretend that an `/admin` URL authenticates callers.
 
+**HLD-2. Deployment.** Solid lines are the delivered default; dashed lines are the
+optional multi-instance mode. Only `docker-compose.yml` is delivered: the load balancer
+or gateway is the operator's, and Compose publishes each replica on its own host port.
+
+```mermaid
+flowchart LR
+    Clients[Customer and back-office clients] --> Gateway["Load balancer or trusted gateway<br/>(operator-provided, not in this repository)"]
+    subgraph Compose["docker-compose.yml"]
+        App1["app: 1 replica by default<br/>read pool max 5, write pool max 10"]
+        AppN["more app replicas (optional)<br/>docker compose up --scale app=3<br/>host ports 8080-8082 by default"]
+        PG[("postgres:16-alpine<br/>max_connections=100<br/>volume postgres-data")]
+    end
+    Gateway --> App1
+    Gateway -.-> AppN
+    App1 -->|"at most 15 connections"| PG
+    AppN -.->|"at most 15 connections each"| PG
+```
+
 ## Service interactions and request flows
 
 | Flow | Interaction and failure boundary |
@@ -78,6 +114,25 @@ coordinator rejects ambient transactions with `Propagation.NEVER` before persist
 JSON negotiation occurs before controller invocation; strict HH:mm parsing prevents
 invalid 24:00 clocks being normalized into midnight.
 
+**HLD-3. Request lifecycle.** Every operation follows this path. Method-level sequences
+for each operation are in the [LLD](../lld/design.md#algorithms-and-sequence-diagrams).
+
+```mermaid
+flowchart TD
+    A[HTTP request] --> B{"X-Correlation-ID absent,<br/>or exactly one valid value?"}
+    B -- "no" --> X1["400 VALIDATION_FAILED<br/>with a generated correlation ID"]
+    B -- "yes" --> C["MDC: correlationId, instanceId<br/>X-Correlation-ID echoed on the response"]
+    C --> D{"Route, method, Accept, Content-Type,<br/>JSON binding and Bean Validation"}
+    D -- "rejected" --> X2["400 / 404 / 405 / 406 / 415<br/>controller not invoked"]
+    D -- "accepted" --> E[Controller maps request DTO to command]
+    E --> F["Service runs rules and repositories inside its transaction<br/>read-only transactions use the read pool"]
+    F --> G{Outcome}
+    G -- "success" --> OK["Commit, map result to response DTO<br/>200 or 201"]
+    G -- "BusinessException" --> X3["400 / 404 / 409 / 422 with errorCode<br/>open transaction rolled back"]
+    G -- "pool wait, statement or lock timeout,<br/>database unavailable" --> X4["503 SERVICE_UNAVAILABLE<br/>Retry-After: 1"]
+    G -- "unexpected failure" --> X5["500 INTERNAL_ERROR<br/>logged without request values"]
+```
+
 ## Flight generation strategy
 
 Hybrid generation projects bookable flights from immutable schedules and the requested
@@ -88,6 +143,20 @@ Full materialization is allowed by the assignment and manageable at this scale, 
 requires maintaining a rolling horizon. Dynamic-only storage is possible but complicates
 allocation references. Hybrid keeps the rolling window a predicate while giving bookings
 a stable foreign-key target.
+
+**HLD-4. Hybrid generation.** Search, seat map and booking evaluate the same two
+predicates; only a booking attempt writes an instance row.
+
+```mermaid
+flowchart TB
+    S["FlightSchedule template<br/>number, route, UTC times,<br/>aircraft, operating weekdays"] --> W{"date in<br/>[today, today + 365)?<br/>today = current UTC date"}
+    W -- "no" --> R1[422 DATE_OUT_OF_WINDOW]
+    W -- "yes" --> D{"schedule operates<br/>on that weekday?"}
+    D -- "no" --> R2["search: schedule omitted<br/>seat map, booking: 404 FLIGHT_NOT_FOUND"]
+    D -- "yes" --> P["Projected flight, no row yet<br/>search: full capacity<br/>seat map: every seat AVAILABLE"]
+    P -- "first booking attempt<br/>that passes validation" --> I["flight_instance row, created once<br/>INSERT ... ON CONFLICT<br/>DO NOTHING<br/>uq_instance (schedule_id, flight_date)<br/>reused by later bookings"]
+    I --> B["booking and booking_seat rows<br/>reference the instance id"]
+```
 
 ## Concurrency strategy
 
@@ -108,6 +177,32 @@ failure. READ COMMITTED is sufficient for this schema-enforced invariant.
 Pessimistic/optimistic inventory locking are valid alternatives, but would add lockable
 inventory rows or serialize unrelated seats through the parent flight. No availability
 counter, `@Version`, distributed lock or reservation state is needed here.
+
+**HLD-5. Two replicas race for one seat.** This is one possible interleaving; the
+database, not either JVM, decides the winner.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant A as Client A
+    participant R1 as Replica 1
+    participant DB as PostgreSQL primary
+    participant R2 as Replica 2
+    participant B as Client B
+    A->>R1: POST /api/v1/bookings (seat 12A)
+    B->>R2: POST /api/v1/bookings (seat 12A)
+    R1->>DB: get or create the flight instance (own short transaction)
+    R2->>DB: get or create the flight instance (same row)
+    R1->>DB: begin, INSERT booking, INSERT booking_seat 12A BOOKED
+    R2->>DB: begin, INSERT booking, INSERT booking_seat 12A BOOKED
+    Note over DB: uq_booking_seat_active admits one BOOKED row per instance and seat.<br/>R2's insert waits for R1's transaction to finish.
+    R1->>DB: COMMIT
+    DB-->>R2: unique violation 23505, R2's transaction rolls back
+    R1-->>A: 201 Created, bookingStatus CONFIRMED
+    R2->>DB: read currently BOOKED seats (new transaction)
+    R2-->>B: 409 SEAT_UNAVAILABLE, currentlyUnavailableSeats [12A]
+    Note over A,B: Had R1 rolled back instead, R2's insert would have succeeded.
+```
 
 Cancellation changes booking and allocation state atomically. Released historical rows
 leave the partial index and allow reuse. A concurrent booker can succeed after release
@@ -172,14 +267,13 @@ are not exposed to unauthenticated callers. Correlation identifiers are validate
 echoed and cleared from MDC after requests; passenger names and payloads are not logged.
 
 Search was measured through real HTTP with 500 schedules and 600,000 synthetic
-active/historical allocations. In the latest recorded full run (R2, 2026-10-21) the
-eight-worker search p95 was 6.858 ms, and the 25:1 mixed run at 16/64/192 clients
-measured search p95 12.515/32.393/97.293 ms. All 816 disjoint bookings succeeded; the
-192-client phase shed 2 of 14,400 searches as explicit 503s. No measured search
-exceeded one second. The phases lasted about 1/2/6 seconds, so this is not a sustained
-capacity certification, and the mixed-load test fails intermittently with a connect-time
-reset. See the [NFR evidence ledger](../tests/nfr-evidence.md) for every run and
-condition, and [LLD](../lld/design.md#query-audit-and-measured-performance) for the
+active/historical allocations, both read-only and in a 25:1 search-to-booking mix at
+16, 64 and 192 closed-loop clients. No recorded search measurement exceeded one second,
+every disjoint booking succeeded, and stress-phase overload appeared only as explicit
+503s. Each phase lasts seconds, so this is not a sustained capacity certification, and
+the mixed-load test fails intermittently with a connect-time reset. The
+[NFR evidence ledger](../tests/nfr-evidence.md) holds every run, number and
+condition; see [LLD](../lld/design.md#query-audit-and-measured-performance) for the
 dataset, SQL plan and query costs. No lazy-loading API is presently necessary; if scale
 changes, bounded pagination/lazy loading is a measured follow-up, not an existing
 endpoint or unlimited-throughput claim.

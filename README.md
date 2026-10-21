@@ -5,7 +5,7 @@ rolling flight instances, search, live seat maps, atomic multi-seat booking and
 cancellation. PostgreSQL, not application-local locks, arbitrates seat ownership.
 
 Design: [HLD](hld/architecture.md), [HLD PDF](hld/architecture.pdf),
-[architecture diagram](hld/diagrams/architecture.svg), [LLD](lld/design.md),
+[diagram index](hld/diagrams/README.md), [LLD](lld/design.md),
 [schema](db/schema.sql), [ER diagram](db/er-diagram.md).
 
 ## Setup instructions
@@ -290,14 +290,12 @@ The transaction writer is a separate Spring bean so rollback completes before
 conflict enrichment. [HLD](hld/architecture.md) and [LLD](lld/design.md) explain
 alternatives, costs and extension boundaries.
 
-At 500 schedules and 600,000 synthetic allocation rows, the latest recorded full run
-(R2, 2026-10-21) measured warm read-only search p95 of 2.589 ms sequentially and
-6.858 ms at eight workers. In the 25:1 mixed run, search p95 was
-12.515/32.393/97.293 ms at 16/64/192 clients. All 816 disjoint bookings succeeded;
-the 192-client phase shed 2 of 14,400 searches as explicit 503s. No measured search
-exceeded one second. `MixedLoadIT` also fails intermittently with a connect-time
-connection reset (3 of 7 recorded runs; cause not established). Every run, its
-conditions and its limitations are in the [NFR evidence ledger](tests/nfr-evidence.md).
+Measured results live in one place, the [NFR evidence ledger](tests/nfr-evidence.md),
+with every run, its revision, conditions and limitations. With 500 schedules and
+600,000 synthetic seat-allocation rows, no recorded search measurement exceeded one
+second, stress-phase overload appeared only as explicit 503s, and no run recorded a
+duplicate active seat. `MixedLoadIT` also fails intermittently with a connect-time
+connection reset before it can report (cause not established; ledger §8).
 These short closed-loop samples are not sustained, cold-cache or production
 capacity guarantees. Existing indexes
 were used; no speculative cache/index was added. Bounded pagination/lazy loading
@@ -401,24 +399,33 @@ truthfully conflict; they never create two active owners.
 
 ## Assumptions
 
-Single airline; one booking belongs to one flight instance; each seat has at most
-one **active** owner, while released historical allocations remain. Aircraft maps
-and created schedules are immutable, with preloaded airports/aircraft.
+Each item names its source: the brief's own assumptions (brief 297-307), an interviewer
+reply, a user decision, or an engineering choice recorded in the spec.
 
-All schedule times/dates use UTC; audit instants use `TIMESTAMPTZ`. No airport-local
-conversion or arrival-date calculation is provided. Arrival may precede departure.
-The agreed window is exactly 365 dates: `[today, today+365)`, not a calendar-year
-interval; an injected UTC clock is evaluated per request, including leap years.
+- **Brief assumptions (297-307):** single airline; one booking is for one flight
+  instance; one seat belongs to only one booking, read as at most one **active** owner
+  while released allocations remain as history; seat maps are fixed per aircraft;
+  created schedules do not change; airports and aircraft are preloaded; times and
+  dates are UTC and time-zone conversion is out of scope.
+- **Engineering choices (spec 41-52):** audit instants use `TIMESTAMPTZ`; no
+  airport-local conversion or arrival-date calculation, so arrival may precede
+  departure; "up to one year" is exactly 365 dates, `[today, today+365)`, not a
+  calendar-year interval, evaluated per request with an injected UTC clock (leap years
+  included); one immutable schedule per flight number; UUID booking references (brief
+  151 allows PNR or UUID); a booking is refused once the UTC departure instant is reached.
+- **User decisions:** a repeated cancellation, or one at or after departure, returns 409
+  (spec 53-55); a flight that departed earlier today may still appear in search
+  (2026-10-21, execution log).
 
-Search filters by date window only, so a flight that departed earlier today still
-appears in that day's results. This is accepted staleness under the clarification that
-search may be stale if booking reports the change: booking it returns 409
-`FLIGHT_DEPARTED`. Departure is checked when the request is validated and again at the
-start of the booking write, not at commit, so a request that starts seconds before
+Search rejects a date outside the 365-day window with 422 and otherwise matches route
+and operating weekday; it does not apply the departure cutoff. A flight that departed
+earlier today therefore still appears in that day's results, even from a fresh query.
+This is the accepted search policy above, not read staleness. Booking such a flight
+returns 409 `FLIGHT_DEPARTED`, so the user learns of the change at booking time, as
+reply 358-361 requires. Departure is checked when the request is validated and again at
+the start of the booking write, not at commit, so a request that starts seconds before
 departure can still commit.
 
-One immutable schedule per flight number, UUID references, departure cutoff and
-409 for repeated/departed cancellation are explicit design/user policy choices.
 There are no seat holds, safe write retries, idempotency keys or booking lookup API.
 A lost response/connection can leave an unknown committed outcome; UUID generation
 does not solve recovery for a caller that never received its reference.

@@ -22,10 +22,11 @@ inferred.
 
 | Source (brief line) | Requirement | Scenarios | Layer exercised |
 |---|---|---|---|
-| NFR, 188-189 | Clean architecture, separation of concerns | S1 | Static (ArchUnit, source rules) |
+| NFR, 188 | Clean architecture | S1 | Static (ArchUnit layer-dependency rules) |
+| NFR, 189 | Separation of concerns | S1 | Static (ArchUnit DTO/model/entity boundary rules, source rules) |
 | NFR, 190 | RESTful API design | S4, S12 | MockMvc; Postman over HTTP |
-| NFR, 191 | Transaction handling | S2, S5, S6, S7 | Service + real PostgreSQL |
-| NFR, 192 | Error handling | S4, S7, S8 | MockMvc / HTTP |
+| NFR, 191 | Transaction handling | S2, S3, S5, S6, S7 | Service + real PostgreSQL |
+| NFR, 192 | Error handling | S1, S4, S7, S8 | Unit + MockMvc / HTTP |
 | NFR, 193 | Validation | S1, S2, S4 | Unit + MockMvc |
 | NFR, 194 | Logging | S1, S4 | Unit + captured output |
 | NFR, 195 | Testability | All (injected clock, Testcontainers, barriers) | – |
@@ -70,7 +71,7 @@ request rate.
 | ID | Test (count) | Conditions / stimulus | Acceptance criterion |
 |---|---|---|---|
 | S1 | Surefire `*Test` (32): ArchUnit 12, exception handler 7, controller slice, DTO/clock/aircraft/source rules | No Docker; static and unit | All pass |
-| S2 | `DatabaseSchemaIT` (7), `ScheduleIT` (7) | Real migrations and seeds; 12 concurrent schedule creators; test-only trigger rejects whichever weekday row is inserted **second**, so an earlier sibling row is guaranteed to exist before the fault | Constraints and seeds present; exactly 1 schedule winner; failed create leaves 0 parent and 0 weekday rows |
+| S2 | `AirlineReservationApplicationIT` (1), `DatabaseSchemaIT` (7), `ScheduleIT` (7) | Full context start; real migrations and seeds; 12 concurrent schedule creators; test-only trigger rejects whichever weekday row is inserted **second**, so an earlier sibling row is guaranteed to exist before the fault | Context starts with both migrations applied and 4 seeded airports; constraints and seeds present; exactly 1 schedule winner; failed create leaves 0 parent and 0 weekday rows |
 | S3 | `InstanceMaterializationIT` (3) | 24 concurrent first bookers; uncommitted competing insert observed via `pg_stat_activity` | One instance row per (schedule, date); existing-instance path is one statement; waiting insert sees the committed winner |
 | S4 | `FlightSearchIT` (4), `SeatMapIT` (3), `BookingIT` (8), `HttpContractsIT` (6) | MockMvc through the full app and real database; injected constraint failures | Required fields and statuses; atomic rollback; 406 before any write; strict `HH:mm`; no names in logs |
 | S5 | `BookingConcurrencyIT` (5) | **Service layer, not HTTP.** Start barrier; 24 same-seat; 24 reversed pairs (`1A,1B` vs `1B,1A`); 16 overlapping pairs; 24 disjoint; 12 × whole 72-seat aircraft | Exactly one winner per contested set; no partial loser; all disjoint succeed; 0 duplicate active seats |
@@ -99,29 +100,30 @@ All times are IST (+05:30). "Unknown" means the source record does not hold that
 | F2 | 2026-10-21 19:50 | `814a891` | `./mvnw -B -ntp -Dit.test=MixedLoadIT -Dtest=SourceConventionsTest verify` | **Fail**: same reset; phase data not persisted |
 | F3 | 2026-10-21 19:51 | `814a891` | `./mvnw spotless:check` | Pass |
 | R1 | 2026-10-21 20:21 | `814a891` (isolated copy, no `target/`) | `./mvnw -B -q verify` | Pass: 32 unit + 57 IT, 0 failures/errors/skips |
-| R2 | 2026-10-21 21:15 | `814a891` + this audit's uncommitted changes (new `ScheduleIT` fault, docs); isolated copy, no `target/` | `./mvnw -B -ntp verify` (includes `spotless:check`) | Pass: 32 unit + 57 IT, 0 failures/errors/skips; 87 files clean; 55 s |
+| R2 | 2026-10-21 21:15 | `814a891` + then-uncommitted `ScheduleIT` fault and docs, later committed as `bca3c84` (the only `src` change between the two). No source fingerprint was recorded, so identity with `bca3c84` is likely but not proven. Isolated copy, no `target/`; reports not archived | `./mvnw -B -ntp verify` (includes `spotless:check`) | Pass: 32 unit + 57 IT, 0 failures/errors/skips; 87 files clean; 55 s |
+| R3 | 2026-10-22 00:10 | `bca3c84`. The 92 build-input files (`src/`, `pom.xml`, Maven wrapper) matched a checkout of that commit byte for byte, and so did the isolated copy (SHA-256 manifest `d17fe711…`). The working tree's other changes were documentation only. Isolated copy, no `target/`; raw reports kept outside the repository | `./mvnw -B -ntp verify` (includes `spotless:check`) | Pass: 32 unit + 57 IT, 0 failures/errors/skips; 87 files clean; Maven total time 01:02 min |
 
 H2 and F1/F2 left only stack traces. `MixedLoadIT` writes its report only after
 every phase passes (see §8).
 
 ## 6. Table B: results per scenario and run
 
-| Scenario | H1 | H3 | F1 | F2 | R1 | R2 |
-|---|---|---|---|---|---|---|
-| S1 | Pass | – | Pass (32/32) | – | Pass (32/32) | Pass (32/32) |
-| S2 | Pass | – | Pass (14/14) | – | Pass (14/14) | Pass (14/14) |
-| S3 | Pass | – | Pass (3/3) | – | Pass (3/3) | Pass (3/3) |
-| S4 | Pass | – | Pass (21/21) | – | Pass (21/21) | Pass (21/21) |
-| S5 | Pass | – | Pass (5/5) | – | Pass (5/5) | Pass (5/5) |
-| S6 | Pass | – | Pass (6/6) | – | Pass (6/6) | Pass (6/6) |
-| S7 | Pass | – | Pass (4/4) | – | Pass (4/4) | Pass (4/4) |
-| S8 | Pass | – | Pass (1/1) | – | Pass (1/1) | Pass (1/1) |
-| S9a/b | Pass | – | Pass | – | Pass | Pass |
-| S10 | Pass | Pass | **Error: reset** | **Error: reset** | Pass | Pass |
+| Scenario | H1 | H3 | F1 | F2 | R1 | R2 | R3 |
+|---|---|---|---|---|---|---|---|
+| S1 | Pass | – | Pass (32/32) | Pass (1/1: `SourceConventionsTest` only) | Pass (32/32) | Pass (32/32) | Pass (32/32) |
+| S2 | Pass | – | Pass (15/15) | – | Pass (15/15) | Pass (15/15) | Pass (15/15) |
+| S3 | Pass | – | Pass (3/3) | – | Pass (3/3) | Pass (3/3) | Pass (3/3) |
+| S4 | Pass | – | Pass (21/21) | – | Pass (21/21) | Pass (21/21) | Pass (21/21) |
+| S5 | Pass | – | Pass (5/5) | – | Pass (5/5) | Pass (5/5) | Pass (5/5) |
+| S6 | Pass | – | Pass (6/6) | – | Pass (6/6) | Pass (6/6) | Pass (6/6) |
+| S7 | Pass | – | Pass (4/4) | – | Pass (4/4) | Pass (4/4) | Pass (4/4) |
+| S8 | Pass | – | Pass (1/1) | – | Pass (1/1) | Pass (1/1) | Pass (1/1) |
+| S9a/b | Pass | – | Pass | – | Pass | Pass | Pass |
+| S10 | Pass | Pass | **Error: reset** | **Error: reset** | Pass | Pass | Pass |
 
 S2 in H1/F1/R1 used the earlier Wednesday-constraint fault; R2 is the first full run
 with the second-insert trigger. S11 (historical Compose) and S12 (H4 Newman) passed;
-they are not re-run by Maven. S13 passed in F3 and R2.
+they are not re-run by Maven. S13 passed in F3, R2 and R3.
 
 ## 7. Latency detail
 
@@ -134,6 +136,7 @@ they are not re-run by Maven. S13 passed in F3 and R2.
 | F1 | 2.401 / 2.827 / 3.478 | 4.602 / 9.417 / 14.302 | 1.077 (planning 0.566) | 0 |
 | R1 | 2.360 / 2.859 / 2.999 | 4.102 / 7.657 / 10.605 | 1.187 (planning 0.747) | 0 |
 | R2 | 2.237 / 2.589 / 2.816 | 4.559 / 6.858 / 9.609 | 1.252 (planning 0.689) | 0 |
+| R3 | 2.255 / 2.746 / 2.811 | 4.307 / 6.490 / 10.255 | 1.035 (planning 0.581) | 0 |
 
 Every run used one SQL statement per search and loaded zero entities. The plan used
 `ix_schedule_route`, `uq_instance` and `uq_booking_seat_active`. A sequential scan of
@@ -158,6 +161,9 @@ they cannot make successful latency look better.
 | R2 | 16 | 1,200 / 0 | 7.742 / 12.515 / 17.154 / 24.916 | 48 | 154.802 / 161.650 | 0.805 | 0 |
 | R2 | 64 | 4,800 / 0 | 28.582 / 32.393 / 54.510 / 86.042 | 192 | 7.672 / 9.576 | 2.203 | 0 |
 | R2 | 192 | 14,398 / 2 | all: 82.831 / 97.293 / 165.875 / 307.096; 200 only: 82.831 / 97.290 / 165.831 / 251.316 | 576 | 6.126 / 8.943 | 6.322 | 0 |
+| R3 | 16 | 1,200 / 0 | 7.643 / 13.456 / 15.776 / 23.351 | 48 | 159.417 / 163.940 | 0.802 | 0 |
+| R3 | 64 | 4,800 / 0 | 28.524 / 36.142 / 54.292 / 80.166 | 192 | 11.520 / 25.095 | 2.233 | 0 |
+| R3 | 192 | 14,399 / 1 | all: 81.814 / 90.164 / 164.669 / 294.545; 200 only: 81.814 / 90.164 / 164.669 / 246.110 | 576 | 5.344 / 9.028 | 6.151 | 0 |
 | F1, F2 | – | not recorded | not recorded | not recorded | – | – | – |
 
 | Run | Hot seat: 64 HTTP contenders for one seat | Final ownership check |
@@ -166,6 +172,7 @@ they cannot make successful latency look better.
 | H3 | 1 × 201, 63 × 409; all-response p95 / max 88.634 / 89.041 | Same |
 | R1 | 1 × 201, 63 × 409; p50 / p95 / p99 / max 32.439 / 36.426 / 36.883 / 36.883 | Same |
 | R2 | 1 × 201, 63 × 409; p50 / p95 / p99 / max 31.796 / 36.687 / 37.960 / 37.960 | Same |
+| R3 | 1 × 201, 63 × 409; p50 / p95 / p99 / max 28.810 / 32.704 / 34.009 / 34.009 | Same |
 
 Warm-ups are searches only, so the 16-client phase is the first to exercise the
 booking path; its booking p95 (~160 ms) is higher than later phases. The cause
@@ -176,10 +183,10 @@ are pre-seeded.
 
 | Observation | Detail |
 |---|---|
-| Pattern | 3 failures (H2, F1, F2) and 4 passes (H1, H3, R1, R2) over two days on the same laptop |
+| Pattern | 3 failures (H2, F1, F2) and 5 passes (H1, H3, R1, R2, R3) from 2026-10-20 to 2026-10-22 on the same laptop |
 | Symptom | `ExecutionException` → `java.net.ConnectException: Connection reset by peer` (root `SocketException`) from the JDK `HttpClient`, surfaced through a client worker in `measurePhase`: the reset happened while **opening** a connection, not after a response. The H2 record attributes it to a search in the 192-client phase; F1/F2 do not record the phase or request kind |
 | Not observed | Any HTTP 500, wrong booking, partial booking or duplicate seat in any run |
-| Cause | **Unknown.** It is a transport error, not an HTTP status. 192 closed-loop clients share one JVM with the server, and Tomcat's default accept queue (`acceptCount` 100) is smaller than 192, so a local accept-queue overflow is plausible but not demonstrated |
+| Cause | **Unknown.** It is a transport error, not an HTTP status, observed while 192 closed-loop clients share one JVM with the server. No cause was demonstrated and no hypothesis is adopted here |
 | Deliberately not done | No retries, no relaxed assertion, no tuning without a demonstrated cause |
 | Reporting gap | `target/mixed-load.txt` is written only after every phase and the final assertions succeed. A failed run leaves no phase metrics, and an older report from a previous run may still be present |
 

@@ -12,7 +12,7 @@ erDiagram
     FLIGHT_SCHEDULE ||--o{ FLIGHT_INSTANCE : materializes
     FLIGHT_INSTANCE ||--o{ BOOKING : receives
     BOOKING ||--|{ BOOKING_SEAT : allocates
-    FLIGHT_INSTANCE ||--o{ BOOKING_SEAT : inventories
+    FLIGHT_INSTANCE ||--o{ BOOKING_SEAT : "inventories, via fk_seat_booking"
     AIRPORT {
         char3 iata_code PK
         varchar name
@@ -33,6 +33,7 @@ erDiagram
         time departure_time
         time arrival_time
         varchar aircraft_id FK
+        timestamptz created_at
     }
     FLIGHT_SCHEDULE_DAY {
         bigint schedule_id PK,FK
@@ -42,6 +43,7 @@ erDiagram
         bigint id PK
         bigint schedule_id FK
         date flight_date
+        timestamptz created_at
     }
     BOOKING {
         bigint id PK
@@ -64,6 +66,8 @@ erDiagram
 The `|{` lower bounds describe application invariants: schedule creation includes
 at least one day and booking includes at least one seat in one transaction.
 Foreign keys alone do not enforce those minimum child counts.
+`booking_seat` has no direct foreign key to `flight_instance`; its instance is
+enforced through the composite `fk_seat_booking` described below.
 
 ## Keys and inventory invariants
 

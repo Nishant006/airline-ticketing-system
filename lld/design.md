@@ -3,7 +3,11 @@
 Implemented design: 2026-10-20. [HLD](../hld/architecture.md) explains the major tradeoffs;
 the execution log records acceptance evidence and remaining submission gates.
 
-## Packages and classes
+## Modules, packages, classes and services
+
+The backend is one Maven module and one Spring Boot application; it does not use Java
+Platform Module System modules. Its logical modules are the layer packages below. The
+services are described after the table and drawn in LLD-1a and LLD-1b.
 
 | Package | Responsibilities |
 |---|---|
@@ -55,6 +59,356 @@ IDENTITY-generated seat IDs imply individual ordered inserts, not JDBC batching.
 matters after a move to sequence IDs. Seats are inserted in lexical label order
 (`Comparator.comparing(seat)`, so `10A` precedes `2A`). Deadlock reduction only needs
 a deterministic total order, not a numeric one.
+
+### Class diagrams
+
+Diagrams in this document are Mermaid source; rendered copies are indexed in
+[hld/diagrams/README.md](../hld/diagrams/README.md).
+
+**LLD-1a. Public contracts and implementations.** Controllers depend only on service
+interfaces. Solid arrows are injected dependencies; a dashed arrow with a hollow head
+points at the interface an implementation realizes. The stereotype on each
+implementation is its `@Transactional` propagation (Spring's default is REQUIRED);
+`readOnly` means REQUIRED with `readOnly = true`.
+
+```mermaid
+classDiagram
+    direction LR
+    class ScheduleController
+    class FlightController
+    class BookingController
+    class ScheduleService {
+        <<interface>>
+        +create(CreateScheduleCommand) ScheduleDetails
+    }
+    class FlightService {
+        <<interface>>
+        +search(String, String, LocalDate) List~FlightAvailability~
+        +seatMap(String, LocalDate) SeatMap
+    }
+    class BookingService {
+        <<interface>>
+        +create(CreateBookingCommand) BookingResult
+    }
+    class CancellationService {
+        <<interface>>
+        +cancel(UUID) BookingResult
+    }
+    class ScheduleServiceImpl {
+        <<REQUIRED>>
+    }
+    class FlightServiceImpl {
+        <<readOnly>>
+    }
+    class BookingServiceImpl {
+        <<NEVER>>
+    }
+    class CancellationServiceImpl {
+        <<REQUIRED>>
+    }
+    ScheduleController --> ScheduleService
+    FlightController --> FlightService
+    BookingController --> BookingService
+    BookingController --> CancellationService
+    ScheduleService <|.. ScheduleServiceImpl
+    FlightService <|.. FlightServiceImpl
+    BookingService <|.. BookingServiceImpl
+    CancellationService <|.. CancellationServiceImpl
+```
+
+**LLD-1b. Internal collaborators.** `BookingServiceImpl` coordinates three internal
+services so that lookup, instance creation and the booking insert each run in their own
+transaction (see [Transaction boundaries](#transaction-boundaries)). `FlightDatePolicy`
+is a shared `@Component`; it and `CancellationServiceImpl` read the injected UTC `Clock`.
+Arrows and stereotypes follow LLD-1a.
+
+```mermaid
+classDiagram
+    direction LR
+    class FlightServiceImpl {
+        <<readOnly>>
+    }
+    class BookingServiceImpl {
+        <<NEVER>>
+    }
+    class CancellationServiceImpl {
+        <<REQUIRED>>
+        -Clock clock
+    }
+    class FlightLookupService {
+        <<interface>>
+        +resolve(String, LocalDate) OperatingFlight
+        +unavailableSeats(long, LocalDate, List~String~) List~String~
+    }
+    class FlightInstanceService {
+        <<interface>>
+        +getOrCreate(long, LocalDate) long
+    }
+    class BookingTransactionService {
+        <<interface>>
+        +create(OperatingFlight, long, CreateBookingCommand) BookingResult
+    }
+    class FlightLookupServiceImpl {
+        <<REQUIRED>>
+    }
+    class FlightInstanceServiceImpl {
+        <<REQUIRED>>
+    }
+    class BookingTransactionServiceImpl {
+        <<REQUIRED>>
+    }
+    class FlightDatePolicy {
+        -Clock clock
+        -BookingProperties properties
+        +requireInWindow(LocalDate) void
+        +requireBeforeDeparture(LocalDate, LocalTime) void
+    }
+    FlightServiceImpl --> FlightLookupService
+    BookingServiceImpl --> FlightLookupService
+    BookingServiceImpl --> FlightInstanceService
+    BookingServiceImpl --> BookingTransactionService
+    FlightLookupService <|.. FlightLookupServiceImpl
+    FlightInstanceService <|.. FlightInstanceServiceImpl
+    BookingTransactionService <|.. BookingTransactionServiceImpl
+    FlightServiceImpl --> FlightDatePolicy
+    BookingServiceImpl --> FlightDatePolicy
+    CancellationServiceImpl --> FlightDatePolicy
+    FlightLookupServiceImpl --> FlightDatePolicy
+    BookingTransactionServiceImpl --> FlightDatePolicy
+```
+
+Repository use by implementation (`BookingServiceImpl` uses no repository; it only
+coordinates the services above):
+
+| Implementation | Repository methods |
+|---|---|
+| `ScheduleServiceImpl` | `AirportRepository.findById` (origin, destination), `AircraftRepository.findById`, `FlightScheduleRepository.saveAndFlush` |
+| `FlightServiceImpl` | `FlightScheduleRepository.search`, `BookingSeatRepository.findBookedSeats` |
+| `FlightLookupServiceImpl` | `FlightScheduleRepository.findOperating`, `BookingSeatRepository.findBookedSeats` |
+| `FlightInstanceServiceImpl` | `FlightInstanceRepository.findId`, `insertIfAbsent` |
+| `BookingTransactionServiceImpl` | `FlightInstanceRepository.getReferenceById`, `BookingRepository.save`, `BookingSeatRepository.saveAllAndFlush` |
+| `CancellationServiceImpl` | `BookingRepository.findByReference`, `cancelConfirmed`; `BookingSeatRepository.findAssignedSeats`, `releaseBookedSeats` |
+
+**LLD-2. Repositories and JPA entities.** Every association is a unidirectional, lazy
+`@ManyToOne`; the only entity collection is the schedule's weekday set. `BookingStatus`
+lives in `model` because service results use it too. Tables, keys and constraints are
+in the [ER diagram](../db/er-diagram.md).
+
+```mermaid
+classDiagram
+    direction LR
+    class AirportRepository {
+        <<JpaRepository>>
+    }
+    class AircraftRepository {
+        <<JpaRepository>>
+    }
+    class FlightScheduleRepository {
+        <<JpaRepository>>
+        +findOperating(String, DayOfWeek) Optional~FlightSchedule~
+        +search(String, String, LocalDate, DayOfWeek) List~FlightAvailability~
+    }
+    class FlightInstanceRepository {
+        <<JpaRepository>>
+        +findId(long, LocalDate) Optional~Long~
+        +insertIfAbsent(long, LocalDate) int
+    }
+    class BookingRepository {
+        <<JpaRepository>>
+        +findByReference(UUID) Optional~Booking~
+        +cancelConfirmed(long, Instant) int
+    }
+    class BookingSeatRepository {
+        <<JpaRepository>>
+        +findBookedSeats(long, LocalDate) Set~String~
+        +findAssignedSeats(long) List~String~
+        +releaseBookedSeats(long) int
+    }
+    class Airport {
+        <<entity>>
+        String code
+        String name
+        String city
+        String country
+    }
+    class Aircraft {
+        <<entity>>
+        String id
+        String type
+        short rowsCount
+        String seatLetters
+        +capacity() int
+        +containsSeat(String) boolean
+        +seatLabels() List~String~
+    }
+    class FlightSchedule {
+        <<entity>>
+        Long id
+        String flightNumber
+        LocalTime departureTime
+        LocalTime arrivalTime
+        Set~DayOfWeek~ daysOfOperation
+    }
+    class FlightInstance {
+        <<entity>>
+        Long id
+        LocalDate flightDate
+    }
+    class Booking {
+        <<entity>>
+        Long id
+        UUID reference
+        BookingStatus status
+        Instant cancelledAt
+    }
+    class BookingSeat {
+        <<entity>>
+        Long id
+        String seatLabel
+        String passengerName
+        Status status
+    }
+    class BookingStatus {
+        <<enumeration>>
+        CONFIRMED
+        CANCELLED
+    }
+    class SeatStatus["BookingSeat.Status"]
+    <<enumeration>> SeatStatus
+    SeatStatus : BOOKED
+    SeatStatus : RELEASED
+    FlightSchedule "*" --> "1" Airport : origin
+    FlightSchedule "*" --> "1" Airport : destination
+    FlightSchedule "*" --> "1" Aircraft : aircraft
+    FlightInstance "*" --> "1" FlightSchedule : schedule
+    Booking "*" --> "1" FlightInstance : flightInstance
+    BookingSeat "*" --> "1" Booking : booking
+    BookingSeat "*" --> "1" FlightInstance : flightInstance
+    Booking ..> BookingStatus
+    BookingSeat ..> SeatStatus
+    note for BookingSeat "flightInstance is copied from the booking. The composite FK fk_seat_booking keeps both equal."
+    AirportRepository ..> Airport
+    AircraftRepository ..> Aircraft
+    FlightScheduleRepository ..> FlightSchedule
+    FlightInstanceRepository ..> FlightInstance
+    BookingRepository ..> Booking
+    BookingSeatRepository ..> BookingSeat
+```
+
+**LLD-3. Transport records, application models and mapping.** Request records map
+themselves to commands; response records have static `from` factories. Models are
+immutable records with no Spring, Jackson or JPA types.
+
+```mermaid
+classDiagram
+    direction LR
+    class CreateScheduleRequest {
+        <<request>>
+        +toCommand() CreateScheduleCommand
+    }
+    class CreateBookingRequest {
+        <<request>>
+        +toCommand() CreateBookingCommand
+    }
+    class ScheduleResponse {
+        <<response>>
+        +from(ScheduleDetails) ScheduleResponse$
+    }
+    class BookingResponse {
+        <<response>>
+        +from(BookingResult) BookingResponse$
+    }
+    class FlightSearchResponse {
+        <<response>>
+        +from(FlightAvailability) FlightSearchResponse$
+    }
+    class SeatMapResponse {
+        <<response>>
+        +from(SeatMap) SeatMapResponse$
+    }
+    class CreateScheduleCommand {
+        <<model>>
+        String flightNumber
+        String originCode
+        String destinationCode
+        LocalTime departureTime
+        LocalTime arrivalTime
+        String aircraftId
+        List~DayOfWeek~ daysOfOperation
+    }
+    class ScheduleDetails {
+        <<model>>
+        String flightNumber
+        String originCode
+        String destinationCode
+        LocalTime departureTime
+        LocalTime arrivalTime
+        String aircraftId
+        List~DayOfWeek~ daysOfOperation
+    }
+    class CreateBookingCommand {
+        <<model>>
+        String flightNumber
+        LocalDate flightDate
+        List~Passenger~ passengers
+    }
+    class BookingResult {
+        <<model>>
+        UUID bookingReference
+        String flightNumber
+        LocalDate flightDate
+        int passengerCount
+        List~String~ assignedSeats
+        BookingStatus bookingStatus
+    }
+    class FlightAvailability {
+        <<model>>
+        String flightNumber
+        LocalTime departureTime
+        LocalTime arrivalTime
+        long availableSeats
+    }
+    class SeatMap {
+        <<model>>
+        String flightNumber
+        LocalDate flightDate
+        List~Seat~ seats
+    }
+    class OperatingFlight {
+        <<model>>
+        long scheduleId
+        String flightNumber
+        LocalTime departureTime
+        SeatLayout layout
+    }
+    class SeatLayout {
+        <<model>>
+        int rowsCount
+        String seatLetters
+        +capacity() int
+        +containsSeat(String) boolean
+        +seatLabels() List~String~
+    }
+    class BookingDetails {
+        <<model>>
+        long id
+        UUID reference
+        String flightNumber
+        LocalDate flightDate
+        LocalTime departureTime
+        BookingStatus status
+    }
+    CreateScheduleRequest ..> CreateScheduleCommand : toCommand()
+    CreateBookingRequest ..> CreateBookingCommand : toCommand()
+    ScheduleResponse ..> ScheduleDetails : from()
+    BookingResponse ..> BookingResult : from()
+    FlightSearchResponse ..> FlightAvailability : from()
+    SeatMapResponse ..> SeatMap : from()
+    OperatingFlight *-- SeatLayout
+    note for SeatMap "Seat = label + status, AVAILABLE or BOOKED"
+    note for BookingDetails "Internal to CancellationServiceImpl"
+    note for OperatingFlight "Returned by resolve()<br/>of FlightLookupService"
+```
 
 ## API contracts
 
@@ -128,14 +482,15 @@ describes a current snapshot, which may have changed again since the failed inse
 
 ## Transaction boundaries
 
-| Component | Boundary |
-|---|---|
-| `ScheduleService` | One transaction for parent and weekdays; explicit flush surfaces write failures |
-| `FlightService` | Read-only queries; no materialization |
-| `FlightInstanceService` | Short transaction: lookup; if absent, DO NOTHING insert then separate SELECT; commits before booking starts |
-| `BookingServiceImpl` | Propagation.NEVER rejects an ambient transaction before persistence; otherwise calls instance/booking proxies sequentially |
-| `BookingTransactionService` | One transaction for booking plus deterministically ordered seat inserts |
-| `CancellationService` | One transaction for lookup, departure/status guards, conditional booking update and release |
+| Component | Propagation | Pool | Boundary |
+|---|---|---|---|
+| `ScheduleServiceImpl.create` | REQUIRED (method) | write | One transaction for the schedule row and its weekday rows; `saveAndFlush` surfaces constraint violations inside the method |
+| `FlightServiceImpl` | REQUIRED, `readOnly` (class) | read | Search and seat map; no materialization, no writes |
+| `FlightLookupServiceImpl` | REQUIRED (class) | read inside the seat-map transaction; write when the booking coordinator calls it | Joins the seat-map transaction. Called from the coordinator, `resolve` and the post-conflict `unavailableSeats` each run in their own short transaction |
+| `FlightInstanceServiceImpl.getOrCreate` | REQUIRED (method) | write | Short transaction: lookup; if absent, DO NOTHING insert then separate SELECT; commits before booking starts |
+| `BookingServiceImpl` | NEVER (class) | none held by the coordinator | Rejects an ambient transaction before persistence; otherwise calls the lookup, instance and booking proxies sequentially, each with its own connection |
+| `BookingTransactionServiceImpl.create` | REQUIRED (method) | write | One transaction for booking plus deterministically ordered seat inserts |
+| `CancellationServiceImpl.cancel` | REQUIRED (method) | write | One transaction for lookup, departure/status guards, conditional booking update and release |
 
 READ COMMITTED is pinned in the datasource. Runtime failures roll back the write unit.
 No nested REQUIRES_NEW, no manual commits, no catch-and-continue in an aborted transaction.
@@ -162,7 +517,11 @@ Busy/cancelled reads return 503, never empty results. Deadlines cancel actual Po
 work, not an asynchronous wrapper that leaves queries running. These are database
 budgets, not bounds on network, cold connection establishment or HTTP queueing.
 
-## Search, booking and cancellation algorithms
+## Algorithms and sequence diagrams
+
+Schedule creation rejects an identical origin and destination, loads both airports and
+the aircraft (`findById`), builds the entity with Lombok's builder and saves it with its
+weekday rows in one transaction; `uq_schedule_flight_number` maps to 409.
 
 Search derives ISO weekday, filters route/day and LEFT JOINs instances/active seats.
 Capacity minus active count returns availability, including zero. The active predicate
@@ -179,6 +538,197 @@ The historical label count must equal the bulk release count and be nonzero, oth
 the transaction fails and rolls back. Bulk JPQL bypasses the persistence context:
 the response explicitly uses CANCELLED and no stale managed booking is modified again.
 The fetched associations and scalar label query avoid per-passenger entity loading.
+
+The sequences below name the real methods. Errors leave as `BusinessException` (or a
+data-access exception) and `GlobalExceptionHandler` renders the RFC 9457 problem body;
+an open transaction rolls back first.
+
+**LLD-4. Create a schedule (FR1).**
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Admin
+    participant C as ScheduleController
+    participant S as ScheduleServiceImpl
+    participant AR as AirportRepository
+    participant CR as AircraftRepository
+    participant FR as FlightScheduleRepository
+    Admin->>C: POST /api/v1/admin/flight-schedules
+    Note over C: @Valid request body, strict HH:mm times, unique non-empty weekdays
+    C->>S: create(request.toCommand())
+    Note over S,FR: One write-pool transaction. The proxy also validates the command.
+    opt origin equals destination
+        S-->>C: BusinessException SAME_ORIGIN_DESTINATION, 400
+    end
+    S->>AR: findById(originCode), findById(destinationCode)
+    S->>CR: findById(aircraftId)
+    opt an airport or the aircraft is missing
+        S-->>C: BusinessException UNKNOWN_REFERENCE, 422
+    end
+    S->>FR: saveAndFlush(FlightSchedule.builder() ... build())
+    Note right of FR: INSERT flight_schedule, then one flight_schedule_day row per weekday
+    alt uq_schedule_flight_number violated
+        S-->>C: BusinessException DUPLICATE_SCHEDULE, 409, rollback
+    else saved
+        S-->>C: ScheduleDetails, commit
+        C-->>Admin: 201 ScheduleResponse, log schedule_created
+    end
+```
+
+**LLD-5. Search and seat map (FR4, FR5).** Each request runs in one read-only
+transaction on the read pool; `FlightLookupServiceImpl` joins it. Neither creates a
+flight instance.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Customer
+    participant FC as FlightController
+    participant FS as FlightServiceImpl
+    participant FL as FlightLookupServiceImpl
+    participant P as FlightDatePolicy
+    participant FR as FlightScheduleRepository
+    participant SR as BookingSeatRepository
+    Customer->>FC: GET /api/v1/flights?originCode=..&destinationCode=..&date=..
+    FC->>FS: search(originCode, destinationCode, date)
+    FS->>P: requireInWindow(date), else 422 DATE_OUT_OF_WINDOW
+    opt origin equals destination
+        FS-->>FC: BusinessException SAME_ORIGIN_DESTINATION, 400
+    end
+    FS->>FR: search(origin, destination, date, weekday)
+    Note right of FR: One JPQL aggregate. Capacity minus BOOKED seats,<br/>LEFT JOIN instance and BOOKED seats,<br/>ordered by departure time and flight number.
+    FR-->>FS: FlightAvailability list, empty when nothing operates
+    FC-->>Customer: 200 FlightSearchResponse list
+    Customer->>FC: GET /api/v1/flights/{flightNumber}/seat-map?date=..
+    FC->>FS: seatMap(flightNumber, date)
+    FS->>FL: resolve(flightNumber, date)
+    FL->>P: requireInWindow(date), else 422 DATE_OUT_OF_WINDOW
+    FL->>FR: findOperating(number, weekday), aircraft fetched
+    FL-->>FS: OperatingFlight, else 404 FLIGHT_NOT_FOUND
+    FS->>SR: findBookedSeats(scheduleId, date)
+    SR-->>FS: BOOKED labels, empty when no instance exists
+    FS-->>FC: SeatMap, every layout label AVAILABLE or BOOKED
+    FC-->>Customer: 200 SeatMapResponse
+```
+
+**LLD-6. Book seats: success and conflict (FR6, FR7, FR9).** The coordinator holds no
+transaction; each numbered transaction below acquires and releases its own write-pool
+connection.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Customer
+    participant BC as BookingController
+    participant BS as BookingServiceImpl
+    participant FL as FlightLookupServiceImpl
+    participant P as FlightDatePolicy
+    participant FI as FlightInstanceServiceImpl
+    participant BT as BookingTransactionServiceImpl
+    participant DB as PostgreSQL
+    Customer->>BC: POST /api/v1/bookings
+    BC->>BS: create(request.toCommand())
+    Note over BS: Propagation.NEVER, an ambient transaction is rejected
+    BS->>BS: requireDistinctSeats, else 400 DUPLICATE_SEAT
+    BS->>FL: resolve(flightNumber, flightDate), transaction 1
+    FL-->>BS: OperatingFlight, else 422 DATE_OUT_OF_WINDOW or 404 FLIGHT_NOT_FOUND
+    BS->>P: requireBeforeDeparture(date, departureTime), else 409 FLIGHT_DEPARTED
+    BS->>BS: requireAircraftSeats(layout, seats), else 422 SEAT_NOT_ON_AIRCRAFT
+    BS->>FI: getOrCreate(scheduleId, date), transaction 2
+    FI->>DB: findId, if absent insertIfAbsent (ON CONFLICT DO NOTHING) and findId again
+    FI-->>BS: instanceId, committed
+    BS->>BT: create(flight, instanceId, command), transaction 3
+    BT->>P: requireInWindow and requireBeforeDeparture again
+    BT->>BT: sort passengers by seat label, reference = UUID.randomUUID()
+    BT->>DB: INSERT booking CONFIRMED
+    BT->>DB: INSERT booking_seat BOOKED, one row per seat in sorted order, flush
+    alt every seat row inserted
+        BT-->>BS: BookingResult CONFIRMED, transaction 3 commits
+        BS-->>BC: BookingResult, log booking_confirmed
+        BC-->>Customer: 201 BookingResponse with bookingReference
+    else uq_booking_seat_active violated
+        DB-->>BT: unique violation 23505
+        BT-->>BS: SeatConflictException, transaction 3 rolled back
+        BS->>FL: unavailableSeats(scheduleId, date, seats), transaction 4
+        FL->>DB: findBookedSeats(scheduleId, date)
+        FL-->>BS: requested seats that are BOOKED now
+        BS-->>BC: BusinessException SEAT_UNAVAILABLE
+        BC-->>Customer: 409 with currentlyUnavailableSeats
+    end
+    Note over BT,DB: Any other integrity violation is rethrown and ends as 500.
+```
+
+**LLD-7. Cancel a booking (FR8).** One write-pool transaction from lookup to release.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Customer
+    participant BC as BookingController
+    participant CS as CancellationServiceImpl
+    participant BR as BookingRepository
+    participant P as FlightDatePolicy
+    participant SR as BookingSeatRepository
+    Customer->>BC: POST /api/v1/bookings/{bookingReference}/cancel
+    BC->>CS: cancel(bookingReference)
+    CS->>BR: findByReference(reference), instance and schedule fetched
+    BR-->>CS: Booking, else 404 BOOKING_NOT_FOUND
+    opt status is already CANCELLED
+        CS-->>BC: BusinessException ALREADY_CANCELLED, 409
+    end
+    CS->>P: requireBeforeDeparture(flightDate, departureTime), else 409 FLIGHT_DEPARTED
+    CS->>SR: findAssignedSeats(bookingId)
+    SR-->>CS: seat labels in label order
+    CS->>BR: cancelConfirmed(bookingId, clock.instant())
+    Note right of BR: UPDATE booking to CANCELLED, sets cancelledAt,<br/>only WHERE status = CONFIRMED
+    opt updated row count is not 1, a concurrent cancel won
+        CS-->>BC: BusinessException ALREADY_CANCELLED, 409, rollback
+    end
+    CS->>SR: releaseBookedSeats(bookingId), BOOKED to RELEASED
+    alt released count is 0 or differs from the label count
+        CS-->>BC: IllegalStateException, rollback, 500 INTERNAL_ERROR
+    else counts match
+        CS-->>BC: BookingResult CANCELLED, commit
+        BC-->>Customer: 200 BookingResponse, log booking_cancelled
+    end
+```
+
+### Lifecycle states
+
+**LLD-8a. Booking status** (`booking.status`, `model.BookingStatus`). A failed booking
+transaction leaves no row, so there is no pending state.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> CONFIRMED: booking transaction commits
+    CONFIRMED --> CANCELLED: cancel before UTC departure, cancelledAt set
+    CONFIRMED --> CONFIRMED: cancel at or after departure, 409 FLIGHT_DEPARTED
+    CANCELLED --> CANCELLED: cancel again, 409 ALREADY_CANCELLED
+    note right of CANCELLED
+        Terminal and kept for history.
+        ck_booking_cancel requires cancelled_at
+        exactly when status is CANCELLED.
+    end note
+```
+
+**LLD-8b. Seat allocation status** (`booking_seat.status`, `BookingSeat.Status`).
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> BOOKED: inserted with its booking
+    BOOKED --> RELEASED: booking cancelled, same transaction
+    note right of BOOKED
+        uq_booking_seat_active admits one BOOKED row
+        per flight instance and seat label.
+    end note
+    note right of RELEASED
+        Outside the partial index, so the seat can be
+        booked again. The row stays as history.
+    end note
+```
 
 ## Testing design
 
@@ -211,21 +761,23 @@ EXPLAIN plan for the clarified latency target.
 
 ## Query audit and measured performance
 
-Environment: macOS arm64, Java 21.0.5, 16 visible processors, PostgreSQL 16.15 in
-Docker and one application with separate read-5/write-10 pools. Dataset:
+Host, runtime and pool conditions are in the evidence ledger
+([§2](../tests/nfr-evidence.md#2-common-environment)). Dataset:
 500 daily schedules (100 matching the searched route), 30 dates each, 15,000 instances,
 30,000 bookings, 300,000 active and 300,000 released allocations. Allocation volume
 is a disclosed synthetic assumption, not derived from DAU.
 
 After 10 warmups, `SearchPerformanceIT` sends 100 sequential HTTP searches and then
-200 at eight workers. In the latest recorded full run (R2, 2026-10-21) p95 was 2.589 ms
-and 6.858 ms. Each returned all 100 results and executed one statement with zero entity
-hydration. These local warm-cache, read-only measurements are not a
-production/mixed-workload or cold-cache guarantee. All runs are in the
+200 at eight workers. Every search must return 200 with all 100 results in under one
+second, execute one SQL statement and hydrate zero entities; every recorded run met
+this. Per-run latency is in the
 [NFR evidence ledger](../tests/nfr-evidence.md#71-read-only-search-s9-milliseconds-all-responses-200).
+These local warm-cache, read-only measurements are not a production/mixed-workload or
+cold-cache guarantee.
 
-`EXPLAIN (ANALYZE, BUFFERS)` of Hibernate's actual emitted query reported about 1.1 ms
-execution (1.252 ms in R2) and used `ix_schedule_route`, `uq_instance`, and `uq_booking_seat_active`.
+`EXPLAIN (ANALYZE, BUFFERS)` of Hibernate's actual emitted query used
+`ix_schedule_route`, `uq_instance` and `uq_booking_seat_active` (execution time per run:
+ledger §7.1).
 A sequential scan of the 3,500-row operating-day table was legitimate. No index hints,
 disabled sequential scans, duplicate index, cache or query rewrite was needed.
 `SearchPerformanceIT` reproduces the dataset and writes SQL, timings and full plan to
@@ -234,9 +786,9 @@ disabled sequential scans, duplicate index, cache or query rewrite was needed.
 `MixedLoadIT` shares `PerformanceDataset` rather than duplicating seed SQL. Each client
 performs three cycles of 25 searches then one disjoint single-seat booking over real HTTP.
 The same JVM hosts the application and client; PostgreSQL runs in Docker, with JaCoCo
-enabled and warm caches. In the latest recorded full run (R2, 2026-10-21), all-response
-search p95 was 12.515/32.393/97.293 ms at 16/64/192 clients; the 192-client phase shed
-2 of 14,400 searches as 503, and no response exceeded one second. Per-run phase tables
+enabled and warm caches. Phases run 16, 64 and 192 clients. No recorded search response
+exceeded one second, and the 192-client phase may shed searches as explicit 503s. Per-run
+phase tables
 (including successful-only latency, booking latency and phase durations) are in the
 [NFR evidence ledger](../tests/nfr-evidence.md#72-mixed-251-load-s10-milliseconds).
 The test fails intermittently with a connect-time connection reset whose cause is not

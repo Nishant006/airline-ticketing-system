@@ -304,8 +304,8 @@ mandatory. Evidence below names actual code/tests, not earlier planning assertio
 | 187-190 | Architecture, concerns, REST | Root package-by-layer, use-case DTOs, controller/service/repository boundaries; ArchUnit; documented HTTP codes |
 | 191-193 | Transactions, errors, validation | Proxied transaction services; full rollback tests; RFC 9457; structural DTO and date policy tests |
 | 194-196 | Logging, testability, reasonable performance | Correlation/MDC/privacy tests; injected clock; real PostgreSQL; one-query projection and measured HTTP latency |
-| 202-213 | HLD architecture/components/interactions/flow/decisions/assumptions/concurrency/generation; diagram encouraged | Completed `hld/architecture.md`, PDF text export and standalone SVG |
-| 215-225 | LLD modules/classes/services/APIs/validation/errors/transactions; sequence diagram optional | Completed `lld/design.md`; no optional sequence diagram claimed |
+| 202-213 | HLD architecture/components/interactions/flow/decisions/assumptions/concurrency/generation; diagram encouraged | Completed `hld/architecture.md` with five Mermaid diagrams (HLD-1 to HLD-5); `hld/architecture.pdf` printed with them; SVG copies indexed in `hld/diagrams/README.md` |
+| 215-225 | LLD modules/classes/services/APIs/validation/errors/transactions; sequence diagram optional | Completed `lld/design.md` with class (LLD-1a to LLD-3), optional sequence (LLD-4 to LLD-7) and state (LLD-8a, LLD-8b) diagrams |
 | 227-236 | Executable backend with setup | Image built, Compose readiness and real public-API walkthrough; README build/run instructions |
 | 238-247 | Schema, table definitions, PK/FK/constraints/indexes; ER preferred | V1/V2, generated/restored `db/schema.sql`, `db/er-diagram.md`, raw database constraint tests |
 | 249-258 | README setup/dependencies/build/run/initialization/decisions | Concrete sections and commands; no placeholder headings |
